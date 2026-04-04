@@ -1,0 +1,246 @@
+<!-- Ballet Mood 微信小程序版 -->
+<view class="container">
+
+  <!-- 主界面 -->
+  <view class="main-container">
+
+    <!-- 头部 -->
+    <view class="header">
+      <text class="header-title">Ballet Mood</text>
+      <text class="header-subtitle">记录每一次优雅的进步</text>
+    </view>
+
+    <!-- 月份导航 -->
+    <view class="month-nav">
+      <text class="nav-btn" bindtap="prevMonth">◀</text>
+      <text class="current-month">{{currentYear}}年 {{currentMonthName}}</text>
+      <text class="nav-btn" bindtap="nextMonth">▶</text>
+    </view>
+
+    <!-- 本月目标 -->
+    <view class="monthly-goal">
+      <text class="goal-label">本月目标</text>
+      <input class="goal-input" value="{{monthlyGoal}}" placeholder="输入目标" placeholder-style="color:#CCCCCC;font-size:28rpx;" bindblur="saveGoal" />
+    </view>
+
+    <!-- 星期标题 -->
+    <view class="weekday-row">
+      <text class="weekday" wx:for="{{weekdays}}" wx:key="index">{{item}}</text>
+    </view>
+
+    <!-- 日历 -->
+    <view class="calendar">
+      <view
+        class="day {{item.isEmpty ? 'empty' : ''}} {{item.isToday ? 'today' : ''}} {{item.hasRecord ? 'has-record' : ''}} {{item.hasRecord && item.photo ? 'with-photo' : ''}}"
+        wx:for="{{calendarDays}}"
+        wx:key="index"
+        bindtap="onDayClick"
+        data-date="{{item.date}}"
+      >
+        <image wx:if="{{item.hasRecord && item.photo}}" class="day-thumbnail" src="{{item.photo}}" mode="aspectFill" />
+        <text class="day-number {{item.hasRecord && item.photo ? 'with-thumb' : ''}}">{{item.day}}</text>
+      </view>
+    </view>
+
+  </view>
+
+  <!-- 全屏记录页面 -->
+  <view class="record-fullscreen {{showEditModal ? 'visible' : ''}}">
+    <!-- 顶部栏 -->
+    <view class="record-header">
+      <text class="record-title">{{modalTitle}}</text>
+      <text class="record-close" bindtap="closeEditModal">完成</text>
+    </view>
+
+    <!-- 可滚动内容区 -->
+    <scroll-view class="record-content" scroll-y>
+
+      <!-- 感悟输入区（核心） -->
+      <view class="insight-section">
+        <textarea
+          class="insight-textarea"
+          placeholder="今天的练习有什么感悟？"
+          value="{{currentNote}}"
+          bindinput="onNoteInput"
+          maxlength="500"
+          placeholder-style="color:#AAAAAA;font-size:30rpx;"
+        />
+      </view>
+
+      <!-- 照片记录 -->
+      <view class="photo-section">
+        <view class="photo-upload-mini" bindtap="choosePhoto">
+          <image wx:if="{{currentPhoto}}" class="photo-thumb" src="{{currentPhoto}}" mode="aspectFill" />
+          <view wx:else class="photo-placeholder">
+            <text class="photo-icon-mini">📷</text>
+            <text class="photo-text-mini">添加照片</text>
+          </view>
+          <text wx:if="{{currentPhoto}}" class="photo-remove" bindtap="removePhoto" catchtap="removePhoto">×</text>
+        </view>
+      </view>
+
+      <!-- 芭蕾术语（胶囊标签，多选 + 长按删除） -->
+      <view class="tags-section">
+        <view class="section-title">芭蕾术语（可多选，长按删除）</view>
+        <view class="term-tags">
+          <view
+            wx:for="{{termsOptions}}"
+            wx:key="index"
+            class="term-tag {{item.selected ? 'active' : ''}}"
+            bindtap="toggleTerm"
+            bindlongpress="longPressTerm"
+            data-index="{{index}}"
+          >{{item.name}}</view>
+        </view>
+        <view class="add-term-row" wx:if="{{showNewTermInput}}">
+          <input class="new-term-field" placeholder="新术语" value="{{newTerm}}" bindinput="onNewTermInput" />
+          <button class="add-term-confirm" type="default" bindtap="addNewTerm">添加</button>
+        </view>
+        <text class="add-term-link" bindtap="showAddTermInput" wx:else>+ 添加术语</text>
+      </view>
+
+      <!-- 涉及部位（胶囊标签） -->
+      <view class="tags-section">
+        <view class="section-title">涉及部位</view>
+        <view class="body-parts">
+          <view
+            wx:for="{{bodyPartsOptions}}"
+            wx:key="key"
+            class="part-tag {{item.selected ? 'active' : ''}}"
+            bindtap="toggleBodyPart"
+            data-index="{{index}}"
+          >{{item.name}}</view>
+        </view>
+      </view>
+
+      <!-- 今日课程 -->
+      <view class="course-section">
+        <view class="section-title">今日课程</view>
+        <view class="course-list">
+          <view class="course-item-compact" wx:for="{{currentCourses}}" wx:for-index="idx" wx:key="id" style="{{item.itemStyle}}">
+            <!-- 课程类型选择（点击标签选择器） -->
+            <view class="course-type-selector" bindtap="showCourseSelector" data-index="{{idx}}">
+              <text class="course-type-text">{{item.name || '选择类型'}}</text>
+              <text class="course-selector-arrow">▼</text>
+            </view>
+            <!-- 时长输入 -->
+            <input class="course-duration-inline" type="digit" value="{{item.duration}}" placeholder="时长" bindinput="onCourseDurationChange" data-index="{{idx}}" />
+            <!-- 删除按钮 -->
+            <text class="course-delete-icon" bindtap="deleteCourse" data-index="{{idx}}">×</text>
+          </view>
+        </view>
+        <button class="add-course-compact" type="default" bindtap="addCourse">+ 添加课程</button>
+
+        <!-- 课程类型标签选择器弹层 -->
+        <view class="course-selector-modal {{showingCourseSelector !== -1 ? 'visible' : ''}}" catchtap="closeCourseSelector">
+          <view class="course-selector-content" catchtap="stopPropagation">
+            <view class="course-selector-title">选择课程类型（长按管理）</view>
+            <view class="course-tags-list">
+              <view
+                wx:for="{{courseTags}}"
+                wx:key="name"
+                wx:for-item="tag"
+                class="course-tag {{currentCourses[showingCourseSelector] && currentCourses[showingCourseSelector].name === tag.name ? 'active' : ''}}"
+                bindtap="selectCourseType"
+                bindlongpress="longPressCourseTag"
+                data-index="{{index}}"
+                data-name="{{tag.name}}"
+              >{{tag.name}}</view>
+            </view>
+            <view class="course-input-row" wx:if="{{showNewCourseInput}}">
+              <input
+                class="new-course-field"
+                placeholder="输入课程名称"
+                placeholder-style="color:#AAAAAA;font-size:26rpx;"
+                value="{{newCourseName}}"
+                bindinput="onNewCourseInput"
+              />
+              <view class="course-input-actions">
+                <button class="course-input-btn confirm" type="default" bindtap="submitCourseTag">
+                  {{editingCourseTagIndex === -1 ? '添加' : '保存'}}
+                </button>
+                <button class="course-input-btn" type="default" bindtap="cancelCourseInput">取消</button>
+              </view>
+            </view>
+            <text class="add-course-link" bindtap="showAddCourseInput" wx:else>+ 添加自定义课程</text>
+            <view class="course-selector-cancel" bindtap="closeCourseSelector">取消</view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 底部占位，防止内容被按钮遮挡 -->
+      <view class="bottom-spacer"></view>
+    </scroll-view>
+
+    <!-- 底部固定按钮区 -->
+    <view class="record-footer">
+      <button class="record-delete" type="default" wx:if="{{isEditMode}}" bindtap="deleteRecord">删除记录</button>
+      <button class="record-save" type="default" bindtap="saveRecord">保存记录</button>
+    </view>
+  </view>
+
+  <!-- 术语管理弹窗 -->
+  <view class="modal-overlay terms-modal-overlay {{showTermsModal ? 'visible' : ''}}" bindtap="closeTermsModal">
+    <view class="terms-modal" catchtap="stopPropagation">
+      <view class="modal-header">
+        <text class="modal-title">管理术语</text>
+        <text class="modal-close" bindtap="closeTermsModal">×</text>
+      </view>
+      <scroll-view class="terms-list" scroll-y>
+        <view class="term-item" wx:for="{{terms}}" wx:key="index">
+          <text class="term-name">{{item}}</text>
+          <button class="term-delete-btn" type="default" bindtap="deleteTerm" data-index="{{index}}">删除</button>
+        </view>
+        <text wx:if="{{terms.length === 0}}" class="empty-terms">暂无术语</text>
+      </scroll-view>
+      <button class="close-terms-btn" type="default" bindtap="closeTermsModal">关闭</button>
+    </view>
+  </view>
+
+  <!-- 明信片视图 -->
+  <view class="modal-overlay postcard-modal-overlay {{showPostcard ? 'visible' : ''}}" bindtap="closePostcard">
+    <view class="postcard-modal" catchtap="stopPropagation">
+      <text class="modal-close postcard-close" bindtap="closePostcard">×</text>
+
+      <view class="postcard-header">
+        <text class="postcard-day">{{postcardData.day}}</text>
+        <view class="postcard-date-info">
+          <text class="postcard-month-year">{{postcardData.month}}月 {{postcardData.year}}</text>
+          <text class="postcard-weekday">{{postcardData.weekday}}</text>
+        </view>
+      </view>
+
+      <view class="postcard-badge">
+        <text class="postcard-icon">🩰</text>
+        <text class="postcard-location">Ballet Mood</text>
+        <view class="postcard-courses">
+          <text class="postcard-course-tag" wx:for="{{postcardData.courses}}" wx:key="index">{{item}}</text>
+        </view>
+      </view>
+
+      <view class="postcard-image-wrapper" wx:if="{{postcardData.photo}}">
+        <image class="postcard-image" src="{{postcardData.photo}}" mode="aspectFill" />
+      </view>
+
+      <view class="postcard-content-area">
+        <view class="postcard-terms" wx:if="{{postcardData.terms && postcardData.terms.length > 0}}">
+          <text class="postcard-term-tag" wx:for="{{postcardData.terms}}" wx:key="index">{{item}}</text>
+        </view>
+        <text class="postcard-note">{{postcardData.note || '暂无记录'}}</text>
+
+        <view class="postcard-body-parts" wx:if="{{postcardData.bodyParts.length > 0}}">
+          <view class="postcard-part-tag" wx:for="{{postcardData.bodyParts}}" wx:key="index" wx:for-item="part">{{part.name}}</view>
+        </view>
+      </view>
+
+      <view class="postcard-actions">
+        <button class="postcard-edit-btn" type="default" bindtap="editFromPostcard">✎ 重新编辑</button>
+        <view class="postcard-secondary-actions">
+          <button class="postcard-action-btn delete" type="default" bindtap="deleteFromPostcard">删除</button>
+          <button class="postcard-action-btn" type="default" bindtap="closePostcard">关闭</button>
+        </view>
+      </view>
+    </view>
+  </view>
+
+</view>

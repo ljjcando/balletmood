@@ -1,0 +1,40 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/stats/stats"
+  ],
+  "window": {
+    "navigationBarTitleText": "Ballet Mood",
+    "navigationBarBackgroundColor": "#F5F0E8",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F5F0E8",
+    "backgroundTextStyle": "light"
+  },
+  "lazyCodeLoading": "requiredComponents",
+  "tabBar": {
+    "color": "#8B8680",
+    "selectedColor": "#D2B48C",
+    "backgroundColor": "#FAF7F2",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "日记"
+      },
+      {
+        "pagePath": "pages/stats/stats",
+        "text": "成就"
+      }
+    ]
+  },
+  "permission": {
+    "scope.writePhotosAlbum": {
+      "desc": "保存练功照片到相册"
+    },
+    "scope.camera": {
+      "desc": "拍摄练功照片"
+    }
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

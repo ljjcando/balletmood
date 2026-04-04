@@ -1,0 +1,51 @@
+<!-- 舞者成就统计页 -->
+<view class="stats-container">
+
+  <!-- 顶部统计卡片 -->
+  <view class="summary-cards">
+    <view class="summary-card main">
+      <text class="summary-value">{{totalHours}}</text>
+      <text class="summary-label">累计课时（小时）</text>
+    </view>
+    <view class="summary-card">
+      <text class="summary-value">{{totalDays}}</text>
+      <text class="summary-label">坚持天数</text>
+    </view>
+    <view class="summary-card">
+      <text class="summary-value">{{monthlyHours}}</text>
+      <text class="summary-label">本月课时（小时）</text>
+    </view>
+  </view>
+
+  <!-- 能量场预留位 -->
+  <view class="section">
+    <view class="section-title">能量分布</view>
+    <view class="energy-placeholder" id="energy-field">
+      <view class="energy-item" wx:for="{{bodyPartsStats}}" wx:key="fullName">
+        <view class="energy-bubble" style="{{item.bubbleStyle}}">
+          <text class="bubble-name">{{item.name}}</text>
+          <text class="bubble-count">{{item.count}}</text>
+        </view>
+      </view>
+      <text wx:if="{{bodyPartsStats.length === 0}}" class="empty-hint">暂无数据</text>
+    </view>
+  </view>
+
+  <!-- 课程统计 -->
+  <view class="section">
+    <view class="section-title">课程分布</view>
+    <view class="course-stats">
+      <view class="course-stat-item" wx:for="{{courseDistribution}}" wx:key="name">
+        <view class="course-stat-header">
+          <text class="course-stat-name">{{item.name}}</text>
+          <text class="course-stat-hours">{{item.hours}}小时 ({{item.percentage}}%)</text>
+        </view>
+        <view class="course-stat-bar-wrapper">
+          <view class="course-stat-bar" style="{{item.barStyle}}"></view>
+        </view>
+      </view>
+      <text wx:if="{{courseDistribution.length === 0}}" class="empty-hint">暂无课程记录</text>
+    </view>
+  </view>
+
+</view>
