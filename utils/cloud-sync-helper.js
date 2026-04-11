@@ -1,6 +1,8 @@
 const { normalizeCourseTags } = require('../pages/index/course-tags-helper');
 
 const COLLECTION_NAME = 'ballet_mood_users';
+const PROFILE_COLLECTION_NAME = 'ballet_mood_profiles';
+const RECORDS_COLLECTION_NAME = 'ballet_mood_records';
 
 const STORAGE_KEYS = {
   records: 'balletMoodData',
@@ -76,19 +78,37 @@ function pickNewerRecord(localRecord, cloudRecord) {
   const localTimestamp = toTimestamp(localRecord.updatedAt);
   const cloudTimestamp = toTimestamp(cloudRecord.updatedAt);
 
+  let preferredRecord;
+  let fallbackRecord;
+
   if (Number.isNaN(localTimestamp) && Number.isNaN(cloudTimestamp)) {
-    return { ...cloudRecord, ...localRecord };
+    preferredRecord = { ...cloudRecord, ...localRecord };
+    fallbackRecord = { ...localRecord, ...cloudRecord };
+  } else if (Number.isNaN(localTimestamp)) {
+    preferredRecord = cloudRecord;
+    fallbackRecord = localRecord;
+  } else if (Number.isNaN(cloudTimestamp)) {
+    preferredRecord = localRecord;
+    fallbackRecord = cloudRecord;
+  } else {
+    preferredRecord = localTimestamp >= cloudTimestamp ? localRecord : cloudRecord;
+    fallbackRecord = preferredRecord === localRecord ? cloudRecord : localRecord;
   }
 
-  if (Number.isNaN(localTimestamp)) {
-    return cloudRecord;
+  if (
+    preferredRecord &&
+    fallbackRecord &&
+    (!preferredRecord.photo || preferredRecord.photo === '') &&
+    typeof fallbackRecord.photo === 'string' &&
+    fallbackRecord.photo
+  ) {
+    return {
+      ...preferredRecord,
+      photo: fallbackRecord.photo
+    };
   }
 
-  if (Number.isNaN(cloudTimestamp)) {
-    return localRecord;
-  }
-
-  return localTimestamp >= cloudTimestamp ? localRecord : cloudRecord;
+  return preferredRecord;
 }
 
 function mergeRecords(localRecords, cloudRecords) {
@@ -192,8 +212,20 @@ function getDb(wxApi = wx) {
   return wxApi.cloud.database();
 }
 
-function getCollection(wxApi = wx) {
-  return getDb(wxApi).collection(COLLECTION_NAME);
+function getCollection(name, wxApi = wx) {
+  return getDb(wxApi).collection(name);
+}
+
+function getLegacyCollection(wxApi = wx) {
+  return getCollection(COLLECTION_NAME, wxApi);
+}
+
+function getProfileCollection(wxApi = wx) {
+  return getCollection(PROFILE_COLLECTION_NAME, wxApi);
+}
+
+function getRecordCollection(wxApi = wx) {
+  return getCollection(RECORDS_COLLECTION_NAME, wxApi);
 }
 
 function getDefaultSnapshot() {
@@ -290,7 +322,7 @@ function pickBestCloudDoc(docs = []) {
 }
 
 async function getCurrentUserDoc(wxApi = wx) {
-  const collection = getCollection(wxApi);
+  const collection = getLegacyCollection(wxApi);
   const result = await collection.where({
     _openid: '{openid}'
   }).get();
@@ -308,54 +340,231 @@ async function getCurrentUserDoc(wxApi = wx) {
   return pickBestCloudDoc(fallbackResult.data);
 }
 
-function toCloudPayload(snapshot) {
+function buildProfilePayload(snapshot) {
   const normalized = normalizeSnapshot(snapshot);
-
   return {
-    records: normalized.records,
     terms: normalized.terms,
     goal: normalized.goal,
     courseTags: normalized.courseTags,
-    updatedAt: new Date()
+    updatedAt: new Date(),
+    schemaVersion: 2
   };
 }
 
-async function pushSnapshotToCloud(snapshot, wxApi = wx) {
-  const collection = getCollection(wxApi);
-  const localSnapshot = readLocalSnapshot(wxApi);
-  const existingDoc = await getCurrentUserDoc(wxApi);
-  const mergedSnapshot = mergeSnapshots(
-    mergeSnapshots(localSnapshot, snapshot),
-    existingDoc ? {
-      records: existingDoc.records,
-      terms: existingDoc.terms,
-      goal: existingDoc.goal,
-      courseTags: existingDoc.courseTags
-    } : {}
-  );
-  const hydratedSnapshot = await hydrateSnapshotPhotos(mergedSnapshot, wxApi);
-  const payload = toCloudPayload(hydratedSnapshot);
-  writeLocalSnapshot(hydratedSnapshot, wxApi);
+function buildRecordPayload(dateKey, record) {
+  return {
+    dateKey,
+    note: record.note || '',
+    photo: record.photo || '',
+    terms: Array.isArray(record.terms) ? record.terms : [],
+    bodyParts: Array.isArray(record.bodyParts) ? record.bodyParts : [],
+    courses: Array.isArray(record.courses) ? record.courses : [],
+    updatedAt: record.updatedAt ? new Date(record.updatedAt) : new Date(),
+    schemaVersion: 2
+  };
+}
+
+async function getCurrentUserProfileDoc(wxApi = wx) {
+  const collection = getProfileCollection(wxApi);
+  const result = await collection.where({
+    _openid: '{openid}'
+  }).get();
+
+  return pickBestCloudDoc((result.data || []).map((doc) => ({
+    ...doc,
+    records: { meta: true }
+  })));
+}
+
+async function listCurrentUserRecordDocs(wxApi = wx) {
+  const collection = getRecordCollection(wxApi);
+  const result = await collection.where({
+    _openid: '{openid}'
+  }).get();
+
+  return Array.isArray(result.data) ? result.data : [];
+}
+
+function toRecordShape(doc = {}) {
+  return {
+    note: doc.note || '',
+    photo: doc.photo || '',
+    terms: Array.isArray(doc.terms) ? doc.terms : [],
+    bodyParts: Array.isArray(doc.bodyParts) ? doc.bodyParts : [],
+    courses: Array.isArray(doc.courses) ? doc.courses : [],
+    updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : doc.updatedAt
+  };
+}
+
+function pickPreferredRecordDoc(currentDoc, nextDoc) {
+  if (!currentDoc) {
+    return nextDoc;
+  }
+
+  const preferredRecord = pickNewerRecord(toRecordShape(currentDoc), toRecordShape(nextDoc));
+  const currentRecord = toRecordShape(currentDoc);
+
+  if (
+    preferredRecord &&
+    preferredRecord.updatedAt === currentRecord.updatedAt &&
+    preferredRecord.note === currentRecord.note &&
+    preferredRecord.photo === currentRecord.photo
+  ) {
+    return currentDoc;
+  }
+
+  return nextDoc;
+}
+
+async function fetchStructuredCloudSnapshot(wxApi = wx) {
+  const [profileDoc, recordDocs] = await Promise.all([
+    getCurrentUserProfileDoc(wxApi),
+    listCurrentUserRecordDocs(wxApi)
+  ]);
+
+  if ((!profileDoc || !profileDoc._id) && recordDocs.length === 0) {
+    return null;
+  }
+
+  const records = recordDocs.reduce((acc, doc) => {
+    const dateKey = normalizeRecordDateKey(doc.dateKey);
+    if (!dateKey) {
+      return acc;
+    }
+
+    acc[dateKey] = acc[dateKey]
+      ? pickNewerRecord(acc[dateKey], toRecordShape(doc))
+      : toRecordShape(doc);
+    return acc;
+  }, {});
+
+  return normalizeSnapshot({
+    records,
+    terms: profileDoc && profileDoc.terms,
+    goal: profileDoc && profileDoc.goal,
+    courseTags: profileDoc && profileDoc.courseTags
+  });
+}
+
+async function saveProfileSnapshot(snapshot, wxApi = wx) {
+  const collection = getProfileCollection(wxApi);
+  const existingDoc = await getCurrentUserProfileDoc(wxApi);
+  const payload = buildProfilePayload(snapshot);
 
   if (existingDoc && existingDoc._id) {
     await collection.doc(existingDoc._id).update({
       data: payload
     });
-
-    return {
-      type: 'update',
-      docId: existingDoc._id,
-      snapshot: hydratedSnapshot
-    };
+    return { type: 'update', docId: existingDoc._id };
   }
 
   const addResult = await collection.add({
     data: payload
   });
+  return { type: 'add', docId: addResult._id };
+}
+
+async function saveRecordSnapshot(snapshot, wxApi = wx, options = {}) {
+  const collection = getRecordCollection(wxApi);
+  const existingDocs = await listCurrentUserRecordDocs(wxApi);
+  const existingByDate = existingDocs.reduce((acc, doc) => {
+    const dateKey = normalizeRecordDateKey(doc.dateKey);
+    if (dateKey) {
+      acc[dateKey] = pickPreferredRecordDoc(acc[dateKey], doc);
+    }
+    return acc;
+  }, {});
+
+  const normalizedSnapshot = normalizeSnapshot(snapshot);
+  const entries = Object.entries(normalizedSnapshot.records);
+  const nextDateKeys = new Set(entries.map(([dateKey]) => dateKey));
+
+  for (const [dateKey, record] of entries) {
+    const payload = buildRecordPayload(dateKey, record);
+    const existingDoc = existingByDate[dateKey];
+
+    if (existingDoc && existingDoc._id) {
+      try {
+        await collection.doc(existingDoc._id).update({
+          data: payload
+        });
+      } catch (error) {
+        if (!(error && error.errCode === -401002)) {
+          throw error;
+        }
+
+        await collection.add({
+          data: payload
+        });
+      }
+    } else {
+      await collection.add({
+        data: payload
+      });
+    }
+  }
+
+  if (options.replaceRecords === true) {
+    const staleDocs = existingDocs.filter((doc) => {
+      const dateKey = normalizeRecordDateKey(doc.dateKey);
+      return dateKey && !nextDateKeys.has(dateKey);
+    });
+
+    for (const doc of staleDocs) {
+      if (!doc || !doc._id) {
+        continue;
+      }
+
+      await collection.doc(doc._id).remove();
+    }
+  }
+}
+
+async function migrateLegacySnapshotToStructuredCloud(wxApi = wx) {
+  const legacyDoc = await getCurrentUserDoc(wxApi);
+  if (!legacyDoc || !legacyDoc.records || Object.keys(legacyDoc.records).length === 0) {
+    return null;
+  }
+
+  const snapshot = normalizeSnapshot({
+    records: legacyDoc.records,
+    terms: legacyDoc.terms,
+    goal: legacyDoc.goal,
+    courseTags: legacyDoc.courseTags
+  });
+  const hydratedSnapshot = await hydrateSnapshotPhotos(snapshot, wxApi);
+  await saveProfileSnapshot(hydratedSnapshot, wxApi);
+  await saveRecordSnapshot(hydratedSnapshot, wxApi);
+  return hydratedSnapshot;
+}
+
+async function pushSnapshotToCloud(snapshot, wxApi = wx, options = {}) {
+  const localSnapshot = readLocalSnapshot(wxApi);
+  const structuredCloudSnapshot = await fetchStructuredCloudSnapshot(wxApi);
+  const legacyDoc = structuredCloudSnapshot ? null : await getCurrentUserDoc(wxApi);
+  const legacySnapshot = legacyDoc ? normalizeSnapshot({
+    records: legacyDoc.records,
+    terms: legacyDoc.terms,
+    goal: legacyDoc.goal,
+    courseTags: legacyDoc.courseTags
+  }) : {};
+  const baseSnapshot = mergeSnapshots(localSnapshot, snapshot);
+
+  const mergedSnapshot = mergeSnapshots(baseSnapshot, structuredCloudSnapshot || legacySnapshot);
+  const nextSnapshot = options.replaceRecords === true
+    ? {
+        ...mergedSnapshot,
+        records: normalizeRecords(baseSnapshot.records)
+      }
+    : mergedSnapshot;
+  const hydratedSnapshot = await hydrateSnapshotPhotos(nextSnapshot, wxApi);
+
+  await saveProfileSnapshot(hydratedSnapshot, wxApi);
+  await saveRecordSnapshot(hydratedSnapshot, wxApi, options);
+  writeLocalSnapshot(hydratedSnapshot, wxApi);
 
   return {
-    type: 'add',
-    docId: addResult._id,
+    type: 'structured-sync',
     snapshot: hydratedSnapshot
   };
 }
@@ -368,21 +577,30 @@ async function backupLocalToCloudIfNeeded(wxApi = wx) {
     };
   }
 
-  const existingDoc = await getCurrentUserDoc(wxApi);
-  if (existingDoc) {
+  const structuredCloudSnapshot = await fetchStructuredCloudSnapshot(wxApi);
+  if (structuredCloudSnapshot) {
     return {
       skipped: true,
       reason: 'cloud-exists',
-      doc: existingDoc
+      snapshot: structuredCloudSnapshot
     };
   }
 
-  const snapshot = readLocalSnapshot(wxApi);
-  const result = await pushSnapshotToCloud(snapshot, wxApi);
+  const legacyDoc = await getCurrentUserDoc(wxApi);
+  if (legacyDoc) {
+    return {
+      skipped: true,
+      reason: 'cloud-exists',
+      doc: legacyDoc
+    };
+  }
+
+  const currentSnapshot = readLocalSnapshot(wxApi);
+  const result = await pushSnapshotToCloud(currentSnapshot, wxApi);
 
   return {
     skipped: false,
-    snapshot,
+    snapshot: result.snapshot,
     ...result
   };
 }
@@ -410,7 +628,6 @@ async function migrateLocalSnapshotToCloud(wxApi = wx) {
 
 async function restoreFromCloudIfLocalEmpty(wxApi = wx) {
   if (hasLocalRecords(wxApi)) {
-    console.log('[cloud-sync] Skip restore: local records already exist');
     return {
       restored: false,
       reason: 'local-exists',
@@ -418,9 +635,12 @@ async function restoreFromCloudIfLocalEmpty(wxApi = wx) {
     };
   }
 
-  const cloudDoc = await getCurrentUserDoc(wxApi);
-  if (!cloudDoc || !cloudDoc.records || Object.keys(cloudDoc.records).length === 0) {
-    console.log('[cloud-sync] No cloud records found for restore');
+  let snapshot = await fetchStructuredCloudSnapshot(wxApi);
+  if (!snapshot) {
+    snapshot = await migrateLegacySnapshotToStructuredCloud(wxApi);
+  }
+
+  if (!snapshot || !snapshot.records || Object.keys(snapshot.records).length === 0) {
     return {
       restored: false,
       reason: 'cloud-empty',
@@ -428,15 +648,7 @@ async function restoreFromCloudIfLocalEmpty(wxApi = wx) {
     };
   }
 
-  const snapshot = normalizeSnapshot({
-    records: cloudDoc.records,
-    terms: cloudDoc.terms,
-    goal: cloudDoc.goal,
-    courseTags: cloudDoc.courseTags
-  });
-
   writeLocalSnapshot(snapshot, wxApi);
-  console.log('[cloud-sync] Restored records from cloud:', Object.keys(snapshot.records));
 
   return {
     restored: true,
@@ -446,22 +658,20 @@ async function restoreFromCloudIfLocalEmpty(wxApi = wx) {
 }
 
 async function fetchLatestCloudSnapshot(wxApi = wx) {
-  const cloudDoc = await getCurrentUserDoc(wxApi);
-
-  if (!cloudDoc || !cloudDoc.records || Object.keys(cloudDoc.records).length === 0) {
-    return null;
+  let snapshot = await fetchStructuredCloudSnapshot(wxApi);
+  if (!snapshot) {
+    snapshot = await migrateLegacySnapshotToStructuredCloud(wxApi);
   }
 
-  return normalizeSnapshot({
-    records: cloudDoc.records,
-    terms: cloudDoc.terms,
-    goal: cloudDoc.goal,
-    courseTags: cloudDoc.courseTags
-  });
+  return snapshot && snapshot.records && Object.keys(snapshot.records).length > 0
+    ? normalizeSnapshot(snapshot)
+    : null;
 }
 
 module.exports = {
   COLLECTION_NAME,
+  PROFILE_COLLECTION_NAME,
+  RECORDS_COLLECTION_NAME,
   STORAGE_KEYS,
   getDefaultSnapshot,
   normalizeSnapshot,
@@ -480,5 +690,7 @@ module.exports = {
   backupLocalToCloudIfNeeded,
   migrateLocalSnapshotToCloud,
   restoreFromCloudIfLocalEmpty,
-  fetchLatestCloudSnapshot
+  fetchLatestCloudSnapshot,
+  fetchStructuredCloudSnapshot,
+  migrateLegacySnapshotToStructuredCloud
 };

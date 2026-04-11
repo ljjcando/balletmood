@@ -17,6 +17,122 @@ function buildPageInstance(pageConfig) {
   };
 }
 
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+test('onLoad renders local records first while startup cloud sync continues in background', async () => {
+  const originalPage = global.Page;
+  const originalWx = global.wx;
+  const originalHelper = require.cache[helperPath];
+
+  let pageConfig;
+  let resolveMigration;
+  const migrationPromise = new Promise((resolve) => {
+    resolveMigration = resolve;
+  });
+
+  require.cache[helperPath] = {
+    id: helperPath,
+    filename: helperPath,
+    loaded: true,
+    exports: {
+      readLocalSnapshot() {
+        return {
+          records: {
+            '2026-04-01': { note: 'local first', courses: [] }
+          },
+          terms: ['Adagio'],
+          goal: '本地目标',
+          courseTags: [{ name: '入门', selected: false }]
+        };
+      },
+      hasLocalRecords() {
+        return true;
+      },
+      migrateLocalSnapshotToCloud() {
+        return migrationPromise;
+      },
+      restoreFromCloudIfLocalEmpty() {
+        return Promise.resolve({
+          restored: false,
+          reason: 'local-exists',
+          snapshot: null
+        });
+      },
+      pushSnapshotToCloud() {
+        return Promise.resolve();
+      },
+      fetchLatestCloudSnapshot() {
+        return Promise.resolve(null);
+      }
+    }
+  };
+
+  try {
+    global.Page = (config) => {
+      pageConfig = config;
+    };
+    global.wx = {
+      showToast() {},
+      showLoading() {},
+      hideLoading() {},
+      showModal() {},
+      stopPullDownRefresh() {},
+      setStorageSync() {},
+      getStorageSync() {
+        return '';
+      }
+    };
+
+    delete require.cache[indexPath];
+    require('../pages/index/index');
+
+    const pageInstance = buildPageInstance(pageConfig);
+    const onLoadPromise = pageConfig.onLoad.call(pageInstance);
+    await flushMicrotasks();
+
+    assert.deepEqual(pageInstance.data.allRecords, {
+      '2026-04-01': { note: 'local first', courses: [] }
+    });
+    assert.equal(pageInstance.data.monthlyGoal, '本地目标');
+
+    resolveMigration({
+      migrated: true,
+      reason: 'full-sync-complete',
+      snapshot: {
+        records: {
+          '2026-03-31': { note: 'cloud merged', courses: [] },
+          '2026-04-01': { note: 'local first', courses: [] }
+        },
+        terms: ['Adagio'],
+        goal: '云端目标',
+        courseTags: [{ name: '入门', selected: false }]
+      }
+    });
+
+    await onLoadPromise;
+    await pageInstance.startupSyncPromise;
+
+    assert.deepEqual(pageInstance.data.allRecords, {
+      '2026-03-31': { note: 'cloud merged', courses: [] },
+      '2026-04-01': { note: 'local first', courses: [] }
+    });
+    assert.equal(pageInstance.data.monthlyGoal, '云端目标');
+  } finally {
+    global.Page = originalPage;
+    global.wx = originalWx;
+    delete require.cache[indexPath];
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
 test('onLoad prefers local snapshot and triggers a cloud backup check', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
@@ -198,6 +314,7 @@ test('onLoad applies migrated cloud photo ids returned from startup sync', async
 
     const pageInstance = buildPageInstance(pageConfig);
     await pageConfig.onLoad.call(pageInstance);
+    await pageInstance.startupSyncPromise;
 
     assert.equal(
       pageInstance.data.allRecords['2026-04-01'].photo,
@@ -285,6 +402,7 @@ test('onLoad restores cloud data when local records are empty', async () => {
 
     const pageInstance = buildPageInstance(pageConfig);
     await pageConfig.onLoad.call(pageInstance);
+    await pageInstance.startupSyncPromise;
 
     assert.deepEqual(pageInstance.data.allRecords, {
       '2026-04-02': { note: 'cloud record', courses: [] }
@@ -418,6 +536,113 @@ test('saveRecord keeps local persistence and backs up the latest snapshot to clo
   }
 });
 
+test('deleteFromPostcard removes the record from page state and syncs the reduced snapshot', async () => {
+  const originalPage = global.Page;
+  const originalWx = global.wx;
+  const originalHelper = require.cache[helperPath];
+
+  let pageConfig;
+  const pushedSnapshots = [];
+  const storageWrites = [];
+
+  require.cache[helperPath] = {
+    id: helperPath,
+    filename: helperPath,
+    loaded: true,
+    exports: {
+      readLocalSnapshot() {
+        return {
+          records: {
+            '2026-04-01': { note: '保留', courses: [] },
+            '2026-04-02': { note: '删除我', photo: 'cloud://env/expired.jpg', courses: [] }
+          },
+          terms: ['Adagio'],
+          goal: '本月目标',
+          courseTags: [{ name: '入门', selected: false }]
+        };
+      },
+      hasLocalRecords() {
+        return true;
+      },
+      migrateLocalSnapshotToCloud() {
+        return Promise.resolve({
+          migrated: false,
+          reason: 'local-only',
+          snapshot: {
+            records: {
+              '2026-04-01': { note: '保留', courses: [] },
+              '2026-04-02': { note: '删除我', photo: 'cloud://env/expired.jpg', courses: [] }
+            },
+            terms: ['Adagio'],
+            goal: '本月目标',
+            courseTags: [{ name: '入门', selected: false }]
+          }
+        });
+      },
+      restoreFromCloudIfLocalEmpty() {
+        return Promise.resolve({ restored: false, reason: 'local-exists', snapshot: null });
+      },
+      pushSnapshotToCloud(snapshot) {
+        pushedSnapshots.push(snapshot);
+        return Promise.resolve({ snapshot });
+      },
+      fetchLatestCloudSnapshot() {
+        return Promise.resolve(null);
+      }
+    }
+  };
+
+  try {
+    global.Page = (config) => {
+      pageConfig = config;
+    };
+    global.wx = {
+      showToast() {},
+      showLoading() {},
+      hideLoading() {},
+      setStorageSync(key, value) {
+        storageWrites.push({ key, value });
+      },
+      getStorageSync() {
+        return '';
+      },
+      showModal({ success }) {
+        success({ confirm: true });
+      }
+    };
+
+    delete require.cache[indexPath];
+    require('../pages/index/index');
+
+    const pageInstance = buildPageInstance(pageConfig);
+    await pageConfig.onLoad.call(pageInstance);
+    await pageInstance.startupSyncPromise;
+
+    pageInstance.data.selectedDate = '2026-04-02';
+    pageInstance.data.showPostcard = true;
+    await pageConfig.deleteFromPostcard.call(pageInstance);
+
+    assert.deepEqual(Object.keys(pageInstance.data.allRecords), ['2026-04-01']);
+    assert.deepEqual(Object.keys(pageInstance.data.records), ['2026-04-01']);
+    assert.equal(
+      pageInstance.data.calendarDays.some((item) => item.date === '2026-04-02' && item.hasRecord),
+      false
+    );
+    assert.equal(storageWrites.some(({ key, value }) => key === 'balletMoodData' && !value['2026-04-02']), true);
+    assert.equal(pushedSnapshots.length, 1);
+    assert.equal(pushedSnapshots[0].records['2026-04-02'], undefined);
+  } finally {
+    global.Page = originalPage;
+    global.wx = originalWx;
+    delete require.cache[indexPath];
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
 test('onLoad waits for async setData before rendering restored cloud records', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
@@ -507,6 +732,7 @@ test('onLoad waits for async setData before rendering restored cloud records', a
     };
 
     await pageConfig.onLoad.call(pageInstance);
+    await pageInstance.startupSyncPromise;
 
     assert.equal(
       pageInstance.data.calendarDays.some((item) => item.date === '2026-04-03' && item.hasRecord),

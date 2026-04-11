@@ -37,7 +37,14 @@
         bindtap="onDayClick"
         data-date="{{item.date}}"
       >
-        <image wx:if="{{item.hasRecord && item.photo}}" class="day-thumbnail" src="{{item.photo}}" mode="aspectFill" />
+        <image
+          wx:if="{{item.hasRecord && item.photo}}"
+          class="day-thumbnail"
+          src="{{item.photo}}"
+          mode="aspectFill"
+          binderror="handleCalendarPhotoError"
+          data-date="{{item.date}}"
+        />
         <text class="day-number {{item.hasRecord && item.photo ? 'with-thumb' : ''}}">{{item.day}}</text>
       </view>
     </view>
@@ -49,7 +56,7 @@
     <!-- 顶部栏 -->
     <view class="record-header">
       <text class="record-title">{{modalTitle}}</text>
-      <text class="record-close" bindtap="closeEditModal">完成</text>
+      <text class="record-close" bindtap="closeEditModal">关闭</text>
     </view>
 
     <!-- 可滚动内容区 -->
@@ -70,7 +77,16 @@
       <!-- 照片记录 -->
       <view class="photo-section">
         <view class="photo-upload-mini" bindtap="choosePhoto">
-          <image wx:if="{{currentPhoto}}" class="photo-thumb" src="{{currentPhoto}}" mode="aspectFill" />
+          <image
+            wx:if="{{currentPhoto && !currentPhotoExpired}}"
+            class="photo-thumb"
+            src="{{currentPhoto}}"
+            mode="aspectFill"
+            binderror="handleEditPhotoError"
+          />
+          <view wx:elif="{{currentPhotoExpired}}" class="photo-expired-box">
+            <text class="photo-expired-text">图片已过期，请重新上传</text>
+          </view>
           <view wx:else class="photo-placeholder">
             <text class="photo-icon-mini">📷</text>
             <text class="photo-text-mini">添加照片</text>
@@ -218,8 +234,17 @@
         </view>
       </view>
 
-      <view class="postcard-image-wrapper" wx:if="{{postcardData.photo}}">
-        <image class="postcard-image" src="{{postcardData.photo}}" mode="aspectFill" />
+      <view class="postcard-image-wrapper" wx:if="{{postcardData.photo || postcardData.photoExpired}}">
+        <image
+          wx:if="{{postcardData.photo}}"
+          class="postcard-image"
+          src="{{postcardData.photo}}"
+          mode="aspectFill"
+          binderror="handlePostcardPhotoError"
+        />
+        <view wx:elif="{{postcardData.photoExpired}}" class="postcard-photo-expired-box">
+          <text class="postcard-photo-expired-text">图片已过期，请重新上传</text>
+        </view>
       </view>
 
       <view class="postcard-content-area">

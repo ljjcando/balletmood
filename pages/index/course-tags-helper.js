@@ -24,7 +24,8 @@ function normalizeCourseTags(courseTags) {
 
       return sanitizeCourseName(tag && tag.name);
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((name, index, list) => list.indexOf(name) === index);
 
   if (normalized.length === 0 && courseTags.length > 0) {
     return DEFAULT_COURSE_TAGS.map(toCourseTag);

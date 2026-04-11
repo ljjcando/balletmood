@@ -20,6 +20,17 @@ test('normalizeCourseTags keeps an empty stored course tag list empty', () => {
   assert.deepEqual(normalizeCourseTags([]), []);
 });
 
+test('normalizeCourseTags removes duplicate course names', () => {
+  assert.deepEqual(
+    normalizeCourseTags(['入门', '提高', '入门', { name: '提高' }, { name: '初级' }]),
+    [
+      { name: '入门', selected: false },
+      { name: '提高', selected: false },
+      { name: '初级', selected: false }
+    ]
+  );
+});
+
 test('addCourseTag appends a trimmed custom course tag', () => {
   const courseTags = addCourseTag(normalizeCourseTags(), '  变奏提高  ');
 

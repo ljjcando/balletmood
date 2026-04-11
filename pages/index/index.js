@@ -1,4 +1,4 @@
-const { applySelectedPhoto } = require('./photo-helper');
+const { applySelectedPhoto, persistPhotoPath } = require('./photo-helper');
 const {
   normalizeCourseTags,
   addCourseTag,
@@ -75,6 +75,7 @@ Page({
     selectedDate: '',
     isEditMode: false,
     currentPhoto: '',
+    currentPhotoExpired: false,
     currentNote: '',
     currentCourses: [],
 
@@ -117,6 +118,7 @@ Page({
 
     // 明信片数据
     postcardData: {},
+    expiredPhotoDates: {},
 
     // 所有记录
     records: {},
@@ -154,6 +156,31 @@ Page({
     });
   },
 
+  isPhotoExpired(dateStr) {
+    return !!(dateStr && this.data.expiredPhotoDates && this.data.expiredPhotoDates[dateStr]);
+  },
+
+  getRenderablePhoto(photoPath, dateStr) {
+    if (!photoPath || this.isPhotoExpired(dateStr)) {
+      return '';
+    }
+
+    return photoPath;
+  },
+
+  async markPhotoExpired(dateStr) {
+    if (!dateStr || this.isPhotoExpired(dateStr)) {
+      return;
+    }
+
+    await this.setDataAsync({
+      expiredPhotoDates: {
+        ...(this.data.expiredPhotoDates || {}),
+        [dateStr]: true
+      }
+    });
+  },
+
   // ==================== 数据加载 ====================
   async applySnapshotToPage(snapshot = getDefaultSnapshot()) {
     const safeSnapshot = snapshot || getDefaultSnapshot();
@@ -179,10 +206,6 @@ Page({
 
   async applySnapshotToPageAndRender(snapshot, source) {
     const safeSnapshot = snapshot || getDefaultSnapshot();
-    const recordKeys = Object.keys(safeSnapshot.records || {});
-
-    console.log(`[index] Applying ${source} snapshot, record count:`, recordKeys.length);
-    console.log(`[index] Restored record keys from ${source}:`, recordKeys);
 
     await this.applySnapshotToPage(safeSnapshot);
     await this.renderCalendar();
@@ -197,31 +220,43 @@ Page({
     };
   },
 
-  syncCurrentSnapshotInBackground(nextRecords) {
-    return pushSnapshotToCloud(this.buildCurrentSnapshot(nextRecords), wx).catch(() => {});
+  syncCurrentSnapshotInBackground(nextRecords, options = {}) {
+    return pushSnapshotToCloud(this.buildCurrentSnapshot(nextRecords), wx, options).catch(() => {});
   },
 
   async loadStorageData() {
+    const localSnapshot = readLocalSnapshot(wx);
+
     try {
+      await this.applySnapshotToPageAndRender(localSnapshot, 'local-startup');
+
       if (hasLocalRecords(wx)) {
-        const migrationResult = await migrateLocalSnapshotToCloud(wx);
-        console.log('[index] Full cloud migration result:', migrationResult.reason);
-        await this.applySnapshotToPageAndRender(
-          migrationResult.snapshot || readLocalSnapshot(wx),
-          'local-full-sync'
-        );
+        this.startupSyncPromise = migrateLocalSnapshotToCloud(wx)
+          .then(async (migrationResult) => {
+            await this.applySnapshotToPageAndRender(
+              migrationResult.snapshot || readLocalSnapshot(wx),
+              'local-full-sync'
+            );
+          })
+          .catch((error) => {
+            console.log('[index] startup migration failed after local render:', error && error.message);
+          });
         return;
       }
 
-      const restoreResult = await restoreFromCloudIfLocalEmpty(wx);
-      console.log('[index] Cloud restore result:', restoreResult.reason);
-      await this.applySnapshotToPageAndRender(
-        restoreResult.snapshot || readLocalSnapshot(wx),
-        restoreResult.restored ? 'cloud' : 'local-fallback'
-      );
+      this.startupSyncPromise = restoreFromCloudIfLocalEmpty(wx)
+        .then(async (restoreResult) => {
+          await this.applySnapshotToPageAndRender(
+            restoreResult.snapshot || readLocalSnapshot(wx),
+            restoreResult.restored ? 'cloud' : 'local-fallback'
+          );
+        })
+        .catch((error) => {
+          console.log('[index] startup restore failed after local render:', error && error.message);
+        });
     } catch (error) {
       console.log('[index] loadStorageData failed, fallback to local snapshot:', error && error.message);
-      await this.applySnapshotToPageAndRender(readLocalSnapshot(wx), 'local-error-fallback');
+      await this.applySnapshotToPageAndRender(localSnapshot, 'local-error-fallback');
     }
   },
 
@@ -302,7 +337,7 @@ Page({
         isEmpty: false,
         isToday,
         hasRecord: !!record,
-        photo: record ? record.photo : ''
+        photo: record ? this.getRenderablePhoto(record.photo, dateStr) : ''
       });
     }
 
@@ -311,7 +346,6 @@ Page({
       calendarDays,
       currentMonthName: monthNames[currentMonth - 1]
     });
-    console.log('当前日历判断变色的数据是:', this.data.records);
   },
 
   // ==================== 日期点击 ====================
@@ -392,6 +426,7 @@ Page({
       selectedDate: dateStr,
       isEditMode: !!record,
       currentPhoto: record ? record.photo : '',
+      currentPhotoExpired: this.isPhotoExpired(dateStr),
       currentNote: record ? record.note : '',
       termsOptions,
       bodyPartsOptions,
@@ -422,6 +457,7 @@ Page({
       showEditModal: false,
       selectedDate: '',
       currentPhoto: '',
+      currentPhotoExpired: false,
       currentNote: '',
       termsOptions,
       bodyPartsOptions,
@@ -445,8 +481,16 @@ Page({
         applySelectedPhoto({
           wxApi: wx,
           tempFilePath,
-          onSuccess: (photoPath) => {
-            this.setData({ currentPhoto: photoPath });
+          onSuccess: async (photoPath) => {
+            const persistentPhotoPath = await persistPhotoPath({
+              wxApi: wx,
+              photoPath
+            });
+
+            this.setData({
+              currentPhoto: persistentPhotoPath,
+              currentPhotoExpired: false
+            });
           }
         });
       }
@@ -454,7 +498,36 @@ Page({
   },
 
   removePhoto() {
-    this.setData({ currentPhoto: '' });
+    this.setData({
+      currentPhoto: '',
+      currentPhotoExpired: false
+    });
+  },
+
+  async handleCalendarPhotoError(e) {
+    const { date } = e.currentTarget.dataset;
+    await this.markPhotoExpired(date);
+    await this.renderCalendar();
+  },
+
+  async handleEditPhotoError() {
+    const { selectedDate } = this.data;
+    await this.markPhotoExpired(selectedDate);
+    this.setData({ currentPhotoExpired: true });
+    await this.renderCalendar();
+  },
+
+  async handlePostcardPhotoError() {
+    const { selectedDate, postcardData } = this.data;
+    await this.markPhotoExpired(selectedDate);
+    this.setData({
+      postcardData: {
+        ...postcardData,
+        photo: '',
+        photoExpired: true
+      }
+    });
+    await this.renderCalendar();
   },
 
   // ==================== 笔记输入 ====================
@@ -833,6 +906,7 @@ Page({
         syncedSnapshot = syncResult && syncResult.snapshot ? syncResult.snapshot : null;
       } catch (error) {
         cloudBackupFailed = true;
+        console.log('[index] saveRecord cloud sync failed:', error);
       }
 
       if (syncedSnapshot) {
@@ -844,8 +918,8 @@ Page({
 
       wx.hideLoading();
       wx.showToast({
-        title: cloudBackupFailed ? '已保存到本地' : '保存成功',
-        icon: cloudBackupFailed ? 'none' : 'success'
+        title: '已保存',
+        icon: 'success'
       });
     } catch (error) {
       wx.hideLoading();
@@ -866,9 +940,12 @@ Page({
           const allRecords = { ...this.data.allRecords };
           delete allRecords[this.data.selectedDate];
 
-          this.setData({ allRecords });
+          this.setData({
+            records: normalizePageRecords(allRecords),
+            allRecords: normalizePageRecords(allRecords)
+          });
           wx.setStorageSync('balletMoodData', allRecords);
-          this.syncCurrentSnapshotInBackground(allRecords);
+          this.syncCurrentSnapshotInBackground(allRecords, { replaceRecords: true });
 
           this.closeEditModal();
           this.renderCalendar();
@@ -920,7 +997,8 @@ Page({
         month,
         year,
         weekday: weekdays[date.getDay()],
-        photo: record.photo,
+        photo: this.getRenderablePhoto(record.photo, dateStr),
+        photoExpired: this.isPhotoExpired(dateStr),
         terms: termsList,
         note: record.note,
         bodyParts: bodyPartsList,
@@ -950,9 +1028,12 @@ Page({
           const allRecords = { ...this.data.allRecords };
           delete allRecords[this.data.selectedDate];
 
-          this.setData({ allRecords });
+          this.setData({
+            records: normalizePageRecords(allRecords),
+            allRecords: normalizePageRecords(allRecords)
+          });
           wx.setStorageSync('balletMoodData', allRecords);
-          this.syncCurrentSnapshotInBackground(allRecords);
+          this.syncCurrentSnapshotInBackground(allRecords, { replaceRecords: true });
 
           this.closePostcard();
           this.renderCalendar();
