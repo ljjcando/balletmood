@@ -516,12 +516,29 @@ page {
   box-sizing: border-box;
 }
 
+.course-selector-header {
+  position: relative;
+  margin-bottom: 24rpx;
+}
+
 .course-selector-title {
   font-size: 28rpx;
   color: #4A4A4A;
   text-align: center;
-  margin-bottom: 24rpx;
   font-weight: 500;
+}
+
+.course-selector-close {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 48rpx;
+  height: 48rpx;
+  line-height: 48rpx;
+  text-align: center;
+  font-size: 36rpx;
+  color: #A89888;
 }
 
 .course-tags-list {
@@ -597,7 +614,7 @@ page {
   color: #D2B48C;
 }
 
-.course-selector-cancel {
+.course-selector-confirm {
   width: 100%;
   padding: 20rpx;
   text-align: center;

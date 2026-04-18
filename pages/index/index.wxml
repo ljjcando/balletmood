@@ -150,7 +150,10 @@
         <!-- 课程类型标签选择器弹层 -->
         <view class="course-selector-modal {{showingCourseSelector !== -1 ? 'visible' : ''}}" catchtap="closeCourseSelector">
           <view class="course-selector-content" catchtap="stopPropagation">
-            <view class="course-selector-title">选择课程类型（长按管理）</view>
+            <view class="course-selector-header">
+              <view class="course-selector-title">选择课程类型（长按管理）</view>
+              <text class="course-selector-close" bindtap="closeCourseSelector">×</text>
+            </view>
             <view class="course-tags-list">
               <view
                 wx:for="{{courseTags}}"
@@ -179,7 +182,7 @@
               </view>
             </view>
             <text class="add-course-link" bindtap="showAddCourseInput" wx:else>+ 添加自定义课程</text>
-            <view class="course-selector-cancel" bindtap="closeCourseSelector">取消</view>
+            <view class="course-selector-confirm" bindtap="closeCourseSelector">确认</view>
           </view>
         </view>
       </view>

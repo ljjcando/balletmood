@@ -151,6 +151,123 @@ function createWxStub({
   };
 }
 
+test('pushSnapshotToCloud keeps a cloud tombstone so stale local records cannot revive deleted entries', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const {
+      pushSnapshotToCloud
+    } = require('../utils/cloud-sync-helper');
+
+    const stub = createWxStub({
+      local: {
+        balletMoodData: {
+          '2026-04-08': {
+            note: '电脑端旧缓存',
+            updatedAt: '2026-04-08T08:00:00.000Z'
+          }
+        },
+        balletMoodTerms: ['Adagio'],
+        balletMoodGoal: '',
+        balletMoodCourseTags: [{ name: '入门', selected: false }]
+      },
+      profileQueryResult: [{
+        _id: 'profile-doc',
+        terms: ['Adagio'],
+        goal: '',
+        courseTags: [{ name: '入门', selected: false }],
+        updatedAt: new Date('2026-04-12T09:00:00.000Z')
+      }],
+      recordsQueryResult: [{
+        _id: 'record-deleted',
+        dateKey: '2026-04-08',
+        note: '',
+        isDeleted: true,
+        deletedAt: new Date('2026-04-12T10:00:00.000Z'),
+        updatedAt: new Date('2026-04-12T10:00:00.000Z')
+      }]
+    });
+
+    const result = await pushSnapshotToCloud({
+      records: {
+        '2026-04-08': {
+          note: '电脑端旧缓存',
+          updatedAt: '2026-04-08T08:00:00.000Z'
+        }
+      },
+      terms: ['Adagio'],
+      goal: '',
+      courseTags: [{ name: '入门', selected: false }]
+    }, stub.wx);
+
+    assert.deepEqual(result.snapshot.records, {});
+    assert.equal(
+      stub.updatedPayloads[RECORDS_COLLECTION].some((payload) => payload.dateKey === '2026-04-08' && payload.isDeleted === true),
+      true
+    );
+    assert.deepEqual(stub.storage.balletMoodData, {});
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('fetchLatestCloudSnapshot filters deleted tombstone docs out of the visible record snapshot', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const {
+      fetchLatestCloudSnapshot
+    } = require('../utils/cloud-sync-helper');
+
+    const stub = createWxStub({
+      profileQueryResult: [{
+        _id: 'profile-doc',
+        terms: ['Adagio'],
+        goal: '目标',
+        courseTags: [{ name: '入门', selected: false }],
+        updatedAt: new Date('2026-04-12T09:00:00.000Z')
+      }],
+      recordsQueryResult: [{
+        _id: 'record-keep',
+        dateKey: '2026-04-07',
+        note: '保留',
+        updatedAt: new Date('2026-04-07T09:00:00.000Z')
+      }, {
+        _id: 'record-deleted',
+        dateKey: '2026-04-08',
+        isDeleted: true,
+        deletedAt: new Date('2026-04-12T10:00:00.000Z'),
+        updatedAt: new Date('2026-04-12T10:00:00.000Z')
+      }]
+    });
+
+    const snapshot = await fetchLatestCloudSnapshot(stub.wx);
+
+    assert.deepEqual(snapshot.records, {
+      '2026-04-07': {
+        note: '保留',
+        photo: '',
+        terms: [],
+        bodyParts: [],
+        courses: [],
+        updatedAt: '2026-04-07T09:00:00.000Z'
+      }
+    });
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
 test('restoreFromCloudIfLocalEmpty falls back to the latest cloud doc when _openid lookup returns empty', async () => {
   const originalHelper = require.cache[helperPath];
 
@@ -596,6 +713,139 @@ test('pushSnapshotToCloud removes structured cloud records that are missing from
     assert.deepEqual(Object.keys(result.snapshot.records), ['2026-04-01']);
     assert.equal(Array.isArray(stub.removedDocIds[RECORDS_COLLECTION_NAME]), true);
     assert.equal(stub.removedDocIds[RECORDS_COLLECTION_NAME].length, 1);
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('pushSnapshotToCloud writes delete tombstones for explicitly deleted dates so other devices cannot revive them', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const {
+      pushSnapshotToCloud
+    } = require('../utils/cloud-sync-helper');
+
+    const stub = createWxStub({
+      local: {
+        balletMoodData: {},
+        balletMoodTerms: ['Adagio'],
+        balletMoodGoal: '',
+        balletMoodCourseTags: [{ name: '入门', selected: false }]
+      },
+      profileQueryResult: [{
+        _id: 'profile-doc',
+        terms: ['Adagio'],
+        goal: '',
+        courseTags: [{ name: '入门', selected: false }],
+        updatedAt: new Date('2026-04-11T16:00:00+08:00')
+      }],
+      recordsQueryResult: [{
+        _id: 'record-delete',
+        dateKey: '2026-04-02',
+        note: '应删除',
+        photo: 'cloud://env/old.jpg',
+        updatedAt: new Date('2026-04-02T10:00:00+08:00')
+      }]
+    });
+
+    const result = await pushSnapshotToCloud({
+      records: {},
+      terms: ['Adagio'],
+      goal: '',
+      courseTags: [{ name: '入门', selected: false }]
+    }, stub.wx, {
+      replaceRecords: true,
+      deletedRecordDates: ['2026-04-02']
+    });
+
+    assert.deepEqual(result.snapshot.records, {});
+    assert.equal(
+      stub.updatedPayloads[RECORDS_COLLECTION].some((payload) => (
+        payload.dateKey === '2026-04-02' &&
+        payload.isDeleted === true &&
+        payload.photo === ''
+      )),
+      true
+    );
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('pushSnapshotToCloud prefers a newer local terms list and course tag list over stale cloud values', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const {
+      pushSnapshotToCloud
+    } = require('../utils/cloud-sync-helper');
+
+    const stub = createWxStub({
+      local: {
+        balletMoodData: {
+          '2026-04-08': {
+            note: '已有记录',
+            updatedAt: '2026-04-08T08:00:00.000Z'
+          }
+        },
+        balletMoodTerms: ['Adagio'],
+        balletMoodTermsUpdatedAt: '2026-04-12T10:00:00.000Z',
+        balletMoodGoal: '',
+        balletMoodCourseTags: [{ name: '提高', selected: false }],
+        balletMoodCourseTagsUpdatedAt: '2026-04-12T10:05:00.000Z'
+      },
+      profileQueryResult: [{
+        _id: 'profile-doc',
+        terms: ['Adagio', 'Fondu'],
+        termsUpdatedAt: new Date('2026-04-11T09:00:00.000Z'),
+        goal: '',
+        courseTags: [
+          { name: '入门', selected: false },
+          { name: '提高', selected: false }
+        ],
+        courseTagsUpdatedAt: new Date('2026-04-11T09:05:00.000Z'),
+        updatedAt: new Date('2026-04-11T09:05:00.000Z')
+      }],
+      recordsQueryResult: [{
+        _id: 'record-keep',
+        dateKey: '2026-04-08',
+        note: '已有记录',
+        updatedAt: new Date('2026-04-08T08:00:00.000Z')
+      }]
+    });
+
+    const result = await pushSnapshotToCloud({
+      records: {
+        '2026-04-08': {
+          note: '已有记录',
+          updatedAt: '2026-04-08T08:00:00.000Z'
+        }
+      },
+      terms: ['Adagio'],
+      termsUpdatedAt: '2026-04-12T10:00:00.000Z',
+      goal: '',
+      courseTags: [{ name: '提高', selected: false }],
+      courseTagsUpdatedAt: '2026-04-12T10:05:00.000Z'
+    }, stub.wx);
+
+    assert.deepEqual(result.snapshot.terms, ['Adagio']);
+    assert.equal(result.snapshot.terms.includes('Fondu'), false);
+    assert.deepEqual(result.snapshot.courseTags, [{ name: '提高', selected: false }]);
+    assert.deepEqual(stub.storage.balletMoodTerms, ['Adagio']);
+    assert.deepEqual(stub.storage.balletMoodCourseTags, [{ name: '提高', selected: false }]);
+    assert.equal(stub.storage.balletMoodTermsUpdatedAt, '2026-04-12T10:00:00.000Z');
+    assert.equal(stub.storage.balletMoodCourseTagsUpdatedAt, '2026-04-12T10:05:00.000Z');
   } finally {
     if (originalHelper) {
       require.cache[helperPath] = originalHelper;
