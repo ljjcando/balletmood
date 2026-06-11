@@ -473,11 +473,25 @@ async function getCurrentUserProfileDoc(wxApi = wx) {
 
 async function listCurrentUserRecordDocs(wxApi = wx) {
   const collection = getRecordCollection(wxApi);
-  const result = await collection.where({
-    _openid: '{openid}'
-  }).get();
+  const pageSize = 20;
+  const allDocs = [];
+  let offset = 0;
 
-  return Array.isArray(result.data) ? result.data : [];
+  while (true) {
+    const result = await collection
+      .where({ _openid: '{openid}' })
+      .skip(offset)
+      .limit(pageSize)
+      .get();
+
+    const docs = Array.isArray(result.data) ? result.data : [];
+    allDocs.push(...docs);
+
+    if (docs.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  return allDocs;
 }
 
 function toRecordShape(doc = {}) {
