@@ -82,6 +82,7 @@ Page({
     // 术语管理
     terms: [],
     termsOptions: [],
+    termsUpdatedAt: '',
     newTerm: '',
     newCourseName: '',
     editingCourseTagIndex: -1,
@@ -114,6 +115,7 @@ Page({
       { name: '软开', selected: false },
       { name: 'PBT', selected: false }
     ],
+    courseTagsUpdatedAt: '',
     showingCourseSelector: -1,  // 当前显示选择器的课程行索引，-1 表示不显示
 
     // 明信片数据
@@ -199,8 +201,10 @@ Page({
       allRecords: normalizedRecords,
       terms,
       termsOptions,
+      termsUpdatedAt: safeSnapshot.termsUpdatedAt || '',
       monthlyGoal: safeSnapshot.goal || '',
-      courseTags
+      courseTags,
+      courseTagsUpdatedAt: safeSnapshot.courseTagsUpdatedAt || ''
     });
   },
 
@@ -215,17 +219,102 @@ Page({
     return {
       records: nextRecords || this.data.allRecords || {},
       terms: this.data.terms || getDefaultSnapshot().terms,
+      termsUpdatedAt: this.data.termsUpdatedAt || '',
       goal: this.data.monthlyGoal || '',
-      courseTags: this.data.courseTags || getDefaultSnapshot().courseTags
+      courseTags: this.data.courseTags || getDefaultSnapshot().courseTags,
+      courseTagsUpdatedAt: this.data.courseTagsUpdatedAt || ''
     };
   },
 
+  trackLocalMutation() {
+    this.localMutationVersion = (this.localMutationVersion || 0) + 1;
+    return this.localMutationVersion;
+  },
+
+  async waitForPendingCloudSync() {
+    if (!this.pendingCloudSyncPromise) {
+      return;
+    }
+
+    await this.pendingCloudSyncPromise.catch(() => {});
+  },
+
   syncCurrentSnapshotInBackground(nextRecords, options = {}) {
-    return pushSnapshotToCloud(this.buildCurrentSnapshot(nextRecords), wx, options).catch(() => {});
+    const snapshot = this.buildCurrentSnapshot(nextRecords);
+    const previousSync = this.pendingCloudSyncPromise || Promise.resolve();
+    const nextSync = previousSync
+      .catch(() => {})
+      .then(() => pushSnapshotToCloud(snapshot, wx, options));
+
+    this.pendingCloudSyncPromise = nextSync;
+    return nextSync.catch(() => {});
+  },
+
+  getSnapshotFreshness(snapshot) {
+    const records = normalizePageRecords(snapshot && snapshot.records);
+    const latest = Object.values(records).reduce((currentLatest, record) => {
+      const timestamp = record && record.updatedAt ? new Date(record.updatedAt).getTime() : Number.NaN;
+      if (Number.isNaN(timestamp)) {
+        return currentLatest;
+      }
+
+      return Math.max(currentLatest, timestamp);
+    }, -Infinity);
+
+    const termsTimestamp = snapshot && snapshot.termsUpdatedAt
+      ? new Date(snapshot.termsUpdatedAt).getTime()
+      : Number.NaN;
+    const courseTagsTimestamp = snapshot && snapshot.courseTagsUpdatedAt
+      ? new Date(snapshot.courseTagsUpdatedAt).getTime()
+      : Number.NaN;
+    const freshness = [latest, termsTimestamp, courseTagsTimestamp].reduce((currentLatest, timestamp) => {
+      if (Number.isNaN(timestamp)) {
+        return currentLatest;
+      }
+
+      return Math.max(currentLatest, timestamp);
+    }, -Infinity);
+
+    return freshness === -Infinity ? Number.NaN : freshness;
+  },
+
+  createMutationTimestamp() {
+    return new Date().toISOString();
+  },
+
+  shouldApplyCloudSnapshot(cloudSnapshot) {
+    if (!cloudSnapshot) {
+      return false;
+    }
+
+    const currentSnapshot = this.buildCurrentSnapshot();
+    const currentFreshness = this.getSnapshotFreshness(currentSnapshot);
+    const cloudFreshness = this.getSnapshotFreshness(cloudSnapshot);
+
+    if (Number.isNaN(cloudFreshness)) {
+      return false;
+    }
+
+    if (Number.isNaN(currentFreshness)) {
+      return true;
+    }
+
+    return cloudFreshness > currentFreshness;
+  },
+
+  async applyAsyncSnapshotIfCurrent(snapshot, mutationVersion, source) {
+    if ((this.localMutationVersion || 0) !== (mutationVersion || 0)) {
+      console.log(`[index] skip stale snapshot from ${source} due to newer local mutation`);
+      return false;
+    }
+
+    await this.applySnapshotToPageAndRender(snapshot, source);
+    return true;
   },
 
   async loadStorageData() {
     const localSnapshot = readLocalSnapshot(wx);
+    const initialMutationVersion = this.localMutationVersion || 0;
 
     try {
       await this.applySnapshotToPageAndRender(localSnapshot, 'local-startup');
@@ -233,8 +322,9 @@ Page({
       if (hasLocalRecords(wx)) {
         this.startupSyncPromise = migrateLocalSnapshotToCloud(wx)
           .then(async (migrationResult) => {
-            await this.applySnapshotToPageAndRender(
+            await this.applyAsyncSnapshotIfCurrent(
               migrationResult.snapshot || readLocalSnapshot(wx),
+              initialMutationVersion,
               'local-full-sync'
             );
           })
@@ -246,8 +336,9 @@ Page({
 
       this.startupSyncPromise = restoreFromCloudIfLocalEmpty(wx)
         .then(async (restoreResult) => {
-          await this.applySnapshotToPageAndRender(
+          await this.applyAsyncSnapshotIfCurrent(
             restoreResult.snapshot || readLocalSnapshot(wx),
+            initialMutationVersion,
             restoreResult.restored ? 'cloud' : 'local-fallback'
           );
         })
@@ -262,6 +353,7 @@ Page({
 
   async onRefresh() {
     try {
+      await this.waitForPendingCloudSync();
       const cloudSnapshot = await fetchLatestCloudSnapshot(wx);
       if (cloudSnapshot) {
         await this.applySnapshotToPageAndRender(cloudSnapshot, 'cloud-refresh');
@@ -277,6 +369,27 @@ Page({
   async onPullDownRefresh() {
     await this.onRefresh();
     wx.stopPullDownRefresh();
+  },
+
+  onShow() {
+    const mutationVersion = this.localMutationVersion || 0;
+
+    this.backgroundRefreshPromise = (async () => {
+      try {
+        if (this.pendingCloudSyncPromise) {
+          await this.waitForPendingCloudSync();
+        }
+        const cloudSnapshot = await fetchLatestCloudSnapshot(wx);
+
+        if (!this.shouldApplyCloudSnapshot(cloudSnapshot)) {
+          return;
+        }
+
+        await this.applyAsyncSnapshotIfCurrent(cloudSnapshot, mutationVersion, 'cloud-onshow');
+      } catch (error) {
+        console.log('[index] onShow background refresh failed:', error && error.message);
+      }
+    })();
   },
 
   // ==================== 月份导航 ====================
@@ -563,9 +676,12 @@ Page({
             name: term,
             selected: false
           }));
+          const termsUpdatedAt = this.createMutationTimestamp();
 
-          this.setData({ terms, termsOptions });
+          this.setData({ terms, termsOptions, termsUpdatedAt });
           wx.setStorageSync('balletMoodTerms', terms);
+          wx.setStorageSync('balletMoodTermsUpdatedAt', termsUpdatedAt);
+          this.trackLocalMutation();
           this.syncCurrentSnapshotInBackground();
           wx.showToast({ title: '删除成功', icon: 'success' });
         }
@@ -592,9 +708,12 @@ Page({
 
     const terms = [...this.data.terms, term];
     const termsOptions = [...this.data.termsOptions, { name: term, selected: false }];
+    const termsUpdatedAt = this.createMutationTimestamp();
 
-    this.setData({ terms, termsOptions, newTerm: '', showNewTermInput: false });
+    this.setData({ terms, termsOptions, termsUpdatedAt, newTerm: '', showNewTermInput: false });
     wx.setStorageSync('balletMoodTerms', terms);
+    wx.setStorageSync('balletMoodTermsUpdatedAt', termsUpdatedAt);
+    this.trackLocalMutation();
     this.syncCurrentSnapshotInBackground();
     wx.showToast({ title: '添加成功', icon: 'success' });
   },
@@ -619,8 +738,11 @@ Page({
             name: term,
             selected: false
           }));
-          this.setData({ terms, termsOptions });
+          const termsUpdatedAt = this.createMutationTimestamp();
+          this.setData({ terms, termsOptions, termsUpdatedAt });
           wx.setStorageSync('balletMoodTerms', terms);
+          wx.setStorageSync('balletMoodTermsUpdatedAt', termsUpdatedAt);
+          this.trackLocalMutation();
           this.syncCurrentSnapshotInBackground();
         }
       }
@@ -720,8 +842,11 @@ Page({
   },
 
   persistCourseTags(courseTags) {
-    this.setData({ courseTags });
+    const courseTagsUpdatedAt = this.createMutationTimestamp();
+    this.setData({ courseTags, courseTagsUpdatedAt });
     wx.setStorageSync('balletMoodCourseTags', courseTags);
+    wx.setStorageSync('balletMoodCourseTagsUpdatedAt', courseTagsUpdatedAt);
+    this.trackLocalMutation();
     this.syncCurrentSnapshotInBackground();
   },
 
@@ -890,6 +1015,7 @@ Page({
 
       const allRecords = { ...this.data.allRecords };
       allRecords[selectedDate] = record;
+      const mutationVersion = this.trackLocalMutation();
 
       await this.setDataAsync({
         records: normalizePageRecords(allRecords),
@@ -909,7 +1035,7 @@ Page({
         console.log('[index] saveRecord cloud sync failed:', error);
       }
 
-      if (syncedSnapshot) {
+      if (syncedSnapshot && (this.localMutationVersion || 0) === mutationVersion) {
         await this.applySnapshotToPage(syncedSnapshot);
       }
 
@@ -939,13 +1065,17 @@ Page({
         if (res.confirm) {
           const allRecords = { ...this.data.allRecords };
           delete allRecords[this.data.selectedDate];
+          this.trackLocalMutation();
 
           this.setData({
             records: normalizePageRecords(allRecords),
             allRecords: normalizePageRecords(allRecords)
           });
           wx.setStorageSync('balletMoodData', allRecords);
-          this.syncCurrentSnapshotInBackground(allRecords, { replaceRecords: true });
+          this.syncCurrentSnapshotInBackground(allRecords, {
+            replaceRecords: true,
+            deletedRecordDates: [this.data.selectedDate]
+          });
 
           this.closeEditModal();
           this.renderCalendar();
@@ -960,6 +1090,7 @@ Page({
     const goal = e.detail.value.trim();
     this.setData({ monthlyGoal: goal });
     wx.setStorageSync('balletMoodGoal', goal);
+    this.trackLocalMutation();
     this.syncCurrentSnapshotInBackground();
   },
 
@@ -1027,13 +1158,17 @@ Page({
         if (res.confirm) {
           const allRecords = { ...this.data.allRecords };
           delete allRecords[this.data.selectedDate];
+          this.trackLocalMutation();
 
           this.setData({
             records: normalizePageRecords(allRecords),
             allRecords: normalizePageRecords(allRecords)
           });
           wx.setStorageSync('balletMoodData', allRecords);
-          this.syncCurrentSnapshotInBackground(allRecords, { replaceRecords: true });
+          this.syncCurrentSnapshotInBackground(allRecords, {
+            replaceRecords: true,
+            deletedRecordDates: [this.data.selectedDate]
+          });
 
           this.closePostcard();
           this.renderCalendar();

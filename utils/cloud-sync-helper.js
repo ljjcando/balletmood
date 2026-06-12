@@ -7,8 +7,10 @@ const RECORDS_COLLECTION_NAME = 'ballet_mood_records';
 const STORAGE_KEYS = {
   records: 'balletMoodData',
   terms: 'balletMoodTerms',
+  termsUpdatedAt: 'balletMoodTermsUpdatedAt',
   goal: 'balletMoodGoal',
-  courseTags: 'balletMoodCourseTags'
+  courseTags: 'balletMoodCourseTags',
+  courseTagsUpdatedAt: 'balletMoodCourseTagsUpdatedAt'
 };
 
 const DEFAULT_TERMS = ['Rond de jambe', 'Adagio', 'jete', 'fondu', 'passe'];
@@ -95,6 +97,10 @@ function pickNewerRecord(localRecord, cloudRecord) {
     fallbackRecord = preferredRecord === localRecord ? cloudRecord : localRecord;
   }
 
+  if (preferredRecord && preferredRecord.isDeleted) {
+    return preferredRecord;
+  }
+
   if (
     preferredRecord &&
     fallbackRecord &&
@@ -143,6 +149,65 @@ function mergeCourseTags(localTags, cloudTags) {
     ...(Array.isArray(cloudTags) ? cloudTags : []),
     ...(Array.isArray(localTags) ? localTags : [])
   ]);
+}
+
+function normalizeMetadataTimestamp(value) {
+  if (typeof value === 'string' && value) {
+    return value;
+  }
+
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isNaN(timestamp) ? '' : value.toISOString();
+  }
+
+  return '';
+}
+
+function pickMergedProfileValue({
+  localValue,
+  cloudValue,
+  localUpdatedAt,
+  cloudUpdatedAt,
+  fallbackMerge
+}) {
+  const normalizedLocalUpdatedAt = normalizeMetadataTimestamp(localUpdatedAt);
+  const normalizedCloudUpdatedAt = normalizeMetadataTimestamp(cloudUpdatedAt);
+  const localTimestamp = toTimestamp(normalizedLocalUpdatedAt);
+  const cloudTimestamp = toTimestamp(normalizedCloudUpdatedAt);
+
+  if (Number.isNaN(localTimestamp) && Number.isNaN(cloudTimestamp)) {
+    return {
+      value: fallbackMerge(localValue, cloudValue),
+      updatedAt: ''
+    };
+  }
+
+  if (Number.isNaN(cloudTimestamp)) {
+    return {
+      value: localValue,
+      updatedAt: normalizedLocalUpdatedAt
+    };
+  }
+
+  if (Number.isNaN(localTimestamp)) {
+    return {
+      value: cloudValue,
+      updatedAt: normalizedCloudUpdatedAt
+    };
+  }
+
+  if (localTimestamp >= cloudTimestamp) {
+    return {
+      value: localValue,
+      updatedAt: normalizedLocalUpdatedAt
+    };
+  }
+
+  return {
+    value: cloudValue,
+    updatedAt: normalizedCloudUpdatedAt
+  };
 }
 
 function isCloudFileId(path) {
@@ -232,8 +297,10 @@ function getDefaultSnapshot() {
   return {
     records: {},
     terms: [...DEFAULT_TERMS],
+    termsUpdatedAt: '',
     goal: '',
-    courseTags: normalizeCourseTags(DEFAULT_COURSE_TAGS)
+    courseTags: normalizeCourseTags(DEFAULT_COURSE_TAGS),
+    courseTagsUpdatedAt: ''
   };
 }
 
@@ -244,20 +311,38 @@ function normalizeSnapshot(snapshot = {}) {
   return {
     records: Object.keys(normalizedRecords).length > 0 ? normalizedRecords : defaults.records,
     terms: Array.isArray(snapshot.terms) && snapshot.terms.length > 0 ? snapshot.terms : defaults.terms,
+    termsUpdatedAt: normalizeMetadataTimestamp(snapshot.termsUpdatedAt),
     goal: typeof snapshot.goal === 'string' ? snapshot.goal : defaults.goal,
-    courseTags: normalizeCourseTags(snapshot.courseTags)
+    courseTags: normalizeCourseTags(snapshot.courseTags),
+    courseTagsUpdatedAt: normalizeMetadataTimestamp(snapshot.courseTagsUpdatedAt)
   };
 }
 
 function mergeSnapshots(localSnapshot = {}, cloudSnapshot = {}) {
   const normalizedLocalSnapshot = normalizeSnapshot(localSnapshot);
   const normalizedCloudSnapshot = normalizeSnapshot(cloudSnapshot);
+  const mergedTerms = pickMergedProfileValue({
+    localValue: normalizedLocalSnapshot.terms,
+    cloudValue: normalizedCloudSnapshot.terms,
+    localUpdatedAt: normalizedLocalSnapshot.termsUpdatedAt,
+    cloudUpdatedAt: normalizedCloudSnapshot.termsUpdatedAt,
+    fallbackMerge: mergeStringArrays
+  });
+  const mergedCourseTags = pickMergedProfileValue({
+    localValue: normalizedLocalSnapshot.courseTags,
+    cloudValue: normalizedCloudSnapshot.courseTags,
+    localUpdatedAt: normalizedLocalSnapshot.courseTagsUpdatedAt,
+    cloudUpdatedAt: normalizedCloudSnapshot.courseTagsUpdatedAt,
+    fallbackMerge: mergeCourseTags
+  });
 
   return {
     records: mergeRecords(normalizedLocalSnapshot.records, normalizedCloudSnapshot.records),
-    terms: mergeStringArrays(normalizedLocalSnapshot.terms, normalizedCloudSnapshot.terms),
+    terms: mergedTerms.value,
+    termsUpdatedAt: mergedTerms.updatedAt,
     goal: normalizedLocalSnapshot.goal || normalizedCloudSnapshot.goal || '',
-    courseTags: mergeCourseTags(normalizedLocalSnapshot.courseTags, normalizedCloudSnapshot.courseTags)
+    courseTags: mergedCourseTags.value,
+    courseTagsUpdatedAt: mergedCourseTags.updatedAt
   };
 }
 
@@ -265,8 +350,10 @@ function readLocalSnapshot(wxApi = wx) {
   return normalizeSnapshot({
     records: wxApi.getStorageSync(STORAGE_KEYS.records),
     terms: wxApi.getStorageSync(STORAGE_KEYS.terms),
+    termsUpdatedAt: wxApi.getStorageSync(STORAGE_KEYS.termsUpdatedAt),
     goal: wxApi.getStorageSync(STORAGE_KEYS.goal),
-    courseTags: wxApi.getStorageSync(STORAGE_KEYS.courseTags)
+    courseTags: wxApi.getStorageSync(STORAGE_KEYS.courseTags),
+    courseTagsUpdatedAt: wxApi.getStorageSync(STORAGE_KEYS.courseTagsUpdatedAt)
   });
 }
 
@@ -274,8 +361,10 @@ function writeLocalSnapshot(snapshot, wxApi = wx) {
   const normalized = normalizeSnapshot(snapshot);
   wxApi.setStorageSync(STORAGE_KEYS.records, normalized.records);
   wxApi.setStorageSync(STORAGE_KEYS.terms, normalized.terms);
+  wxApi.setStorageSync(STORAGE_KEYS.termsUpdatedAt, normalized.termsUpdatedAt);
   wxApi.setStorageSync(STORAGE_KEYS.goal, normalized.goal);
   wxApi.setStorageSync(STORAGE_KEYS.courseTags, normalized.courseTags);
+  wxApi.setStorageSync(STORAGE_KEYS.courseTagsUpdatedAt, normalized.courseTagsUpdatedAt);
   return normalized;
 }
 
@@ -344,8 +433,10 @@ function buildProfilePayload(snapshot) {
   const normalized = normalizeSnapshot(snapshot);
   return {
     terms: normalized.terms,
+    termsUpdatedAt: normalized.termsUpdatedAt ? new Date(normalized.termsUpdatedAt) : null,
     goal: normalized.goal,
     courseTags: normalized.courseTags,
+    courseTagsUpdatedAt: normalized.courseTagsUpdatedAt ? new Date(normalized.courseTagsUpdatedAt) : null,
     updatedAt: new Date(),
     schemaVersion: 2
   };
@@ -359,6 +450,10 @@ function buildRecordPayload(dateKey, record) {
     terms: Array.isArray(record.terms) ? record.terms : [],
     bodyParts: Array.isArray(record.bodyParts) ? record.bodyParts : [],
     courses: Array.isArray(record.courses) ? record.courses : [],
+    isDeleted: !!record.isDeleted,
+    deletedAt: record.isDeleted
+      ? (record.deletedAt ? new Date(record.deletedAt) : new Date())
+      : null,
     updatedAt: record.updatedAt ? new Date(record.updatedAt) : new Date(),
     schemaVersion: 2
   };
@@ -378,21 +473,67 @@ async function getCurrentUserProfileDoc(wxApi = wx) {
 
 async function listCurrentUserRecordDocs(wxApi = wx) {
   const collection = getRecordCollection(wxApi);
-  const result = await collection.where({
-    _openid: '{openid}'
-  }).get();
+  const pageSize = 20;
+  const allDocs = [];
+  let offset = 0;
 
-  return Array.isArray(result.data) ? result.data : [];
+  while (true) {
+    const result = await collection
+      .where({ _openid: '{openid}' })
+      .skip(offset)
+      .limit(pageSize)
+      .get();
+
+    const docs = Array.isArray(result.data) ? result.data : [];
+    allDocs.push(...docs);
+
+    if (docs.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  return allDocs;
 }
 
 function toRecordShape(doc = {}) {
-  return {
+  const record = {
     note: doc.note || '',
     photo: doc.photo || '',
     terms: Array.isArray(doc.terms) ? doc.terms : [],
     bodyParts: Array.isArray(doc.bodyParts) ? doc.bodyParts : [],
     courses: Array.isArray(doc.courses) ? doc.courses : [],
     updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : doc.updatedAt
+  };
+
+  if (doc.isDeleted) {
+    record.isDeleted = true;
+    record.deletedAt = doc.deletedAt instanceof Date ? doc.deletedAt.toISOString() : doc.deletedAt;
+  }
+
+  return record;
+}
+
+function isDeletedRecord(record) {
+  return !!(record && record.isDeleted);
+}
+
+function stripDeletedRecords(records) {
+  const normalizedRecords = normalizeRecords(records);
+
+  return Object.keys(normalizedRecords).reduce((acc, dateKey) => {
+    if (!isDeletedRecord(normalizedRecords[dateKey])) {
+      acc[dateKey] = normalizedRecords[dateKey];
+    }
+
+    return acc;
+  }, {});
+}
+
+function stripDeletedSnapshot(snapshot = {}) {
+  const normalizedSnapshot = normalizeSnapshot(snapshot);
+
+  return {
+    ...normalizedSnapshot,
+    records: stripDeletedRecords(normalizedSnapshot.records)
   };
 }
 
@@ -441,8 +582,10 @@ async function fetchStructuredCloudSnapshot(wxApi = wx) {
   return normalizeSnapshot({
     records,
     terms: profileDoc && profileDoc.terms,
+    termsUpdatedAt: profileDoc && profileDoc.termsUpdatedAt,
     goal: profileDoc && profileDoc.goal,
-    courseTags: profileDoc && profileDoc.courseTags
+    courseTags: profileDoc && profileDoc.courseTags,
+    courseTagsUpdatedAt: profileDoc && profileDoc.courseTagsUpdatedAt
   });
 }
 
@@ -478,6 +621,11 @@ async function saveRecordSnapshot(snapshot, wxApi = wx, options = {}) {
   const normalizedSnapshot = normalizeSnapshot(snapshot);
   const entries = Object.entries(normalizedSnapshot.records);
   const nextDateKeys = new Set(entries.map(([dateKey]) => dateKey));
+  const deletedRecordDates = new Set(
+    Array.isArray(options.deletedRecordDates)
+      ? options.deletedRecordDates.map((dateKey) => normalizeRecordDateKey(dateKey)).filter(Boolean)
+      : []
+  );
 
   for (const [dateKey, record] of entries) {
     const payload = buildRecordPayload(dateKey, record);
@@ -504,10 +652,35 @@ async function saveRecordSnapshot(snapshot, wxApi = wx, options = {}) {
     }
   }
 
+  for (const dateKey of deletedRecordDates) {
+    const deletedTimestamp = new Date().toISOString();
+    const payload = buildRecordPayload(dateKey, {
+      note: '',
+      photo: '',
+      terms: [],
+      bodyParts: [],
+      courses: [],
+      isDeleted: true,
+      deletedAt: deletedTimestamp,
+      updatedAt: deletedTimestamp
+    });
+    const existingDoc = existingByDate[dateKey];
+
+    if (existingDoc && existingDoc._id) {
+      await collection.doc(existingDoc._id).update({
+        data: payload
+      });
+    } else {
+      await collection.add({
+        data: payload
+      });
+    }
+  }
+
   if (options.replaceRecords === true) {
     const staleDocs = existingDocs.filter((doc) => {
       const dateKey = normalizeRecordDateKey(doc.dateKey);
-      return dateKey && !nextDateKeys.has(dateKey);
+      return dateKey && !nextDateKeys.has(dateKey) && !deletedRecordDates.has(dateKey);
     });
 
     for (const doc of staleDocs) {
@@ -561,11 +734,12 @@ async function pushSnapshotToCloud(snapshot, wxApi = wx, options = {}) {
 
   await saveProfileSnapshot(hydratedSnapshot, wxApi);
   await saveRecordSnapshot(hydratedSnapshot, wxApi, options);
-  writeLocalSnapshot(hydratedSnapshot, wxApi);
+  const visibleSnapshot = stripDeletedSnapshot(hydratedSnapshot);
+  writeLocalSnapshot(visibleSnapshot, wxApi);
 
   return {
     type: 'structured-sync',
-    snapshot: hydratedSnapshot
+    snapshot: visibleSnapshot
   };
 }
 
@@ -640,7 +814,9 @@ async function restoreFromCloudIfLocalEmpty(wxApi = wx) {
     snapshot = await migrateLegacySnapshotToStructuredCloud(wxApi);
   }
 
-  if (!snapshot || !snapshot.records || Object.keys(snapshot.records).length === 0) {
+  const visibleSnapshot = snapshot ? stripDeletedSnapshot(snapshot) : null;
+
+  if (!visibleSnapshot || !visibleSnapshot.records || Object.keys(visibleSnapshot.records).length === 0) {
     return {
       restored: false,
       reason: 'cloud-empty',
@@ -648,12 +824,12 @@ async function restoreFromCloudIfLocalEmpty(wxApi = wx) {
     };
   }
 
-  writeLocalSnapshot(snapshot, wxApi);
+  writeLocalSnapshot(visibleSnapshot, wxApi);
 
   return {
     restored: true,
     reason: 'cloud-restored',
-    snapshot
+    snapshot: visibleSnapshot
   };
 }
 
@@ -663,8 +839,10 @@ async function fetchLatestCloudSnapshot(wxApi = wx) {
     snapshot = await migrateLegacySnapshotToStructuredCloud(wxApi);
   }
 
-  return snapshot && snapshot.records && Object.keys(snapshot.records).length > 0
-    ? normalizeSnapshot(snapshot)
+  const visibleSnapshot = snapshot ? stripDeletedSnapshot(snapshot) : null;
+
+  return visibleSnapshot && visibleSnapshot.records && Object.keys(visibleSnapshot.records).length > 0
+    ? normalizeSnapshot(visibleSnapshot)
     : null;
 }
 
