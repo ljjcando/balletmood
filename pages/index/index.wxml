@@ -76,7 +76,7 @@
 
       <!-- 照片记录 -->
       <view class="photo-section">
-        <view class="photo-upload-mini" bindtap="choosePhoto">
+        <view class="photo-upload-mini">
           <image
             wx:if="{{currentPhoto && !currentPhotoExpired}}"
             class="photo-thumb"
@@ -84,10 +84,10 @@
             mode="aspectFill"
             binderror="handleEditPhotoError"
           />
-          <view wx:elif="{{currentPhotoExpired}}" class="photo-expired-box">
+          <view wx:elif="{{currentPhotoExpired}}" class="photo-expired-box" bindtap="choosePhoto">
             <text class="photo-expired-text">图片已过期，请重新上传</text>
           </view>
-          <view wx:else class="photo-placeholder">
+          <view wx:else class="photo-placeholder" bindtap="choosePhoto">
             <text class="photo-icon-mini">📷</text>
             <text class="photo-text-mini">添加照片</text>
           </view>
