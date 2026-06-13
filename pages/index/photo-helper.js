@@ -15,8 +15,14 @@ function applySelectedPhoto({ wxApi, tempFilePath, onSuccess }) {
       success: (editRes) => {
         onSuccess(editRes && editRes.tempFilePath ? editRes.tempFilePath : tempFilePath);
       },
-      fail: () => {
-        // 用户在编辑/裁剪界面点了"取消" → 不选择照片，保持原状
+      fail: (err) => {
+        const errMsg = err && err.errMsg ? err.errMsg : '';
+        if (errMsg.indexOf('cancel') !== -1) {
+          // 用户主动取消编辑/裁剪 → 不选择照片
+          return;
+        }
+        // 平台不支持 editImage 或调用失败 → 退回用原图
+        onSuccess(tempFilePath);
       }
     });
   } catch (error) {
