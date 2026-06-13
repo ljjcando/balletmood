@@ -12,6 +12,7 @@ const {
   migrateLocalSnapshotToCloud,
   restoreFromCloudIfLocalEmpty,
   pushSnapshotToCloud,
+  saveSingleRecordToCloud,
   fetchLatestCloudSnapshot
 } = require('../../utils/cloud-sync-helper');
 
@@ -245,6 +246,30 @@ Page({
     const nextSync = previousSync
       .catch(() => {})
       .then(() => pushSnapshotToCloud(snapshot, wx, options));
+
+    this.pendingCloudSyncPromise = nextSync;
+    return nextSync.catch(() => {});
+  },
+
+  syncSingleRecordInBackground(dateKey, record) {
+    const previousSync = this.pendingCloudSyncPromise || Promise.resolve();
+    const nextSync = previousSync
+      .catch(() => {})
+      .then(async () => {
+        const result = await saveSingleRecordToCloud(dateKey, record, wx);
+        // 如果照片被上传到云端（photo 由本地路径变为 cloud:// ID），把这次变化回写到本地存储
+        // 不主动 setData 页面，避免覆盖用户在同步期间的新一轮编辑；下次启动会从本地拿到 cloud:// ID
+        if (result && result.record && result.record.photo && result.record.photo !== record.photo) {
+          const currentLocal = wx.getStorageSync('balletMoodData') || {};
+          if (currentLocal[dateKey]) {
+            currentLocal[dateKey] = { ...currentLocal[dateKey], photo: result.record.photo };
+            wx.setStorageSync('balletMoodData', currentLocal);
+          }
+        }
+      })
+      .catch((error) => {
+        console.log('[index] syncSingleRecordInBackground failed:', error && error.message);
+      });
 
     this.pendingCloudSyncPromise = nextSync;
     return nextSync.catch(() => {});
@@ -1040,8 +1065,9 @@ Page({
         icon: 'success'
       });
 
-      // 云端同步移到后台进行，与删除/术语等其他流程一致
-      this.syncCurrentSnapshotInBackground(allRecords);
+      // 云端同步走精准单条更新（轻量路径）：只 update 这一条 dateKey 的云端文档，
+      // 不再拉全量、不再重写其他记录；耗时约 1-2 秒，跨设备几乎能立即看到新记录
+      this.syncSingleRecordInBackground(selectedDate, record);
     } catch (error) {
       wx.showModal({
         title: '保存失败',

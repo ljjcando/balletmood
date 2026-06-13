@@ -680,6 +680,47 @@ async function saveRecordSnapshot(snapshot, wxApi = wx, options = {}) {
   }
 }
 
+async function saveSingleRecordToCloud(dateKey, record, wxApi = wx) {
+  const normalizedDateKey = normalizeRecordDateKey(dateKey);
+  if (!normalizedDateKey || !record) {
+    return null;
+  }
+
+  let finalRecord = record;
+  if (record.photo && !isCloudFileId(record.photo)) {
+    const uploadedPhoto = await uploadPhotoIfNeeded(normalizedDateKey, record.photo, wxApi);
+    finalRecord = { ...record, photo: uploadedPhoto };
+  }
+
+  const collection = getRecordCollection(wxApi);
+  const existingResult = await collection
+    .where({
+      _openid: '{openid}',
+      dateKey: normalizedDateKey
+    })
+    .limit(1)
+    .get();
+
+  const existingDoc = Array.isArray(existingResult.data) ? existingResult.data[0] : null;
+  const payload = buildRecordPayload(normalizedDateKey, finalRecord);
+
+  if (existingDoc && existingDoc._id) {
+    try {
+      await collection.doc(existingDoc._id).update({ data: payload });
+      return { type: 'update', docId: existingDoc._id, record: finalRecord };
+    } catch (error) {
+      if (!(error && error.errCode === -401002)) {
+        throw error;
+      }
+      const addResult = await collection.add({ data: payload });
+      return { type: 'add', docId: addResult._id, record: finalRecord };
+    }
+  }
+
+  const addResult = await collection.add({ data: payload });
+  return { type: 'add', docId: addResult._id, record: finalRecord };
+}
+
 async function migrateLegacySnapshotToStructuredCloud(wxApi = wx) {
   const legacyDoc = await getCurrentUserDoc(wxApi);
   if (!legacyDoc || !legacyDoc.records || Object.keys(legacyDoc.records).length === 0) {
@@ -852,6 +893,7 @@ module.exports = {
   hasLocalRecords,
   getCurrentUserDoc,
   pushSnapshotToCloud,
+  saveSingleRecordToCloud,
   backupLocalToCloudIfNeeded,
   migrateLocalSnapshotToCloud,
   restoreFromCloudIfLocalEmpty,
