@@ -998,8 +998,6 @@ Page({
   // ==================== 保存记录 ====================
   async saveRecord() {
     try {
-      wx.showLoading({ title: '保存中...', mask: true });
-
       const { selectedDate, currentPhoto, currentNote, termsOptions, bodyPartsOptions, currentCourses } = this.data;
 
       // 从 termsOptions 中筛选出选中的术语
@@ -1026,7 +1024,7 @@ Page({
 
       const allRecords = { ...this.data.allRecords };
       allRecords[selectedDate] = record;
-      const mutationVersion = this.trackLocalMutation();
+      this.trackLocalMutation();
 
       await this.setDataAsync({
         records: normalizePageRecords(allRecords),
@@ -1034,32 +1032,17 @@ Page({
       });
       wx.setStorageSync('balletMoodData', allRecords);
 
-      const snapshot = this.buildCurrentSnapshot(allRecords);
-      let cloudBackupFailed = false;
-      let syncedSnapshot = null;
-
-      try {
-        const syncResult = await pushSnapshotToCloud(snapshot, wx);
-        syncedSnapshot = syncResult && syncResult.snapshot ? syncResult.snapshot : null;
-      } catch (error) {
-        cloudBackupFailed = true;
-        console.log('[index] saveRecord cloud sync failed:', error);
-      }
-
-      if (syncedSnapshot && (this.localMutationVersion || 0) === mutationVersion) {
-        await this.applySnapshotToPage(syncedSnapshot);
-      }
-
       this.closeEditModal();
       await this.renderCalendar();
 
-      wx.hideLoading();
       wx.showToast({
         title: '已保存',
         icon: 'success'
       });
+
+      // 云端同步移到后台进行，与删除/术语等其他流程一致
+      this.syncCurrentSnapshotInBackground(allRecords);
     } catch (error) {
-      wx.hideLoading();
       wx.showModal({
         title: '保存失败',
         content: `错误信息: ${error.message || JSON.stringify(error)}`,
