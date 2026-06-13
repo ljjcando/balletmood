@@ -611,9 +611,20 @@ Page({
   },
 
   removePhoto() {
-    this.setData({
-      currentPhoto: '',
-      currentPhotoExpired: false
+    wx.showModal({
+      title: '删除照片',
+      content: '确定要删除这张照片吗？',
+      confirmText: '删除',
+      confirmColor: '#D2B48C',
+      cancelText: '取消',
+      success: (res) => {
+        if (res.confirm) {
+          this.setData({
+            currentPhoto: '',
+            currentPhotoExpired: false
+          });
+        }
+      }
     });
   },
 

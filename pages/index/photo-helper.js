@@ -16,7 +16,7 @@ function applySelectedPhoto({ wxApi, tempFilePath, onSuccess }) {
         onSuccess(editRes && editRes.tempFilePath ? editRes.tempFilePath : tempFilePath);
       },
       fail: () => {
-        onSuccess(tempFilePath);
+        // 用户在编辑/裁剪界面点了"取消" → 不选择照片，保持原状
       }
     });
   } catch (error) {

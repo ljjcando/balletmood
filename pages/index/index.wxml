@@ -91,7 +91,7 @@
             <text class="photo-icon-mini">📷</text>
             <text class="photo-text-mini">添加照片</text>
           </view>
-          <text wx:if="{{currentPhoto}}" class="photo-remove" bindtap="removePhoto" catchtap="removePhoto">×</text>
+          <text wx:if="{{currentPhoto}}" class="photo-remove" catchtap="removePhoto">×</text>
         </view>
       </view>
 
