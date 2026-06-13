@@ -101,19 +101,6 @@ function pickNewerRecord(localRecord, cloudRecord) {
     return preferredRecord;
   }
 
-  if (
-    preferredRecord &&
-    fallbackRecord &&
-    (!preferredRecord.photo || preferredRecord.photo === '') &&
-    typeof fallbackRecord.photo === 'string' &&
-    fallbackRecord.photo
-  ) {
-    return {
-      ...preferredRecord,
-      photo: fallbackRecord.photo
-    };
-  }
-
   return preferredRecord;
 }
 
