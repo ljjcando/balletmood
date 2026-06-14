@@ -65,6 +65,7 @@ Page({
 
     // 本月目标
     monthlyGoal: '',
+    monthlyGoalUpdatedAt: '',
 
     // 弹窗状态
     showEditModal: false,
@@ -206,6 +207,7 @@ Page({
       termsOptions,
       termsUpdatedAt: safeSnapshot.termsUpdatedAt || '',
       monthlyGoal: safeSnapshot.goal || '',
+      monthlyGoalUpdatedAt: safeSnapshot.goalUpdatedAt || '',
       courseTags,
       courseTagsUpdatedAt: safeSnapshot.courseTagsUpdatedAt || ''
     });
@@ -231,6 +233,7 @@ Page({
       terms: this.data.terms || getDefaultSnapshot().terms,
       termsUpdatedAt: this.data.termsUpdatedAt || '',
       goal: this.data.monthlyGoal || '',
+      goalUpdatedAt: this.data.monthlyGoalUpdatedAt || '',
       courseTags: this.data.courseTags || getDefaultSnapshot().courseTags,
       courseTagsUpdatedAt: this.data.courseTagsUpdatedAt || ''
     };
@@ -301,7 +304,10 @@ Page({
     const courseTagsTimestamp = snapshot && snapshot.courseTagsUpdatedAt
       ? new Date(snapshot.courseTagsUpdatedAt).getTime()
       : Number.NaN;
-    const freshness = [latest, termsTimestamp, courseTagsTimestamp].reduce((currentLatest, timestamp) => {
+    const goalTimestamp = snapshot && snapshot.goalUpdatedAt
+      ? new Date(snapshot.goalUpdatedAt).getTime()
+      : Number.NaN;
+    const freshness = [latest, termsTimestamp, courseTagsTimestamp, goalTimestamp].reduce((currentLatest, timestamp) => {
       if (Number.isNaN(timestamp)) {
         return currentLatest;
       }
@@ -1117,10 +1123,16 @@ Page({
   // ==================== 本月目标 ====================
   saveGoal(e) {
     const goal = e.detail.value.trim();
-    this.setData({ monthlyGoal: goal });
+    if (goal === this.data.monthlyGoal) {
+      return;
+    }
+    const monthlyGoalUpdatedAt = this.createMutationTimestamp();
+    this.setData({ monthlyGoal: goal, monthlyGoalUpdatedAt });
     wx.setStorageSync('balletMoodGoal', goal);
+    wx.setStorageSync('balletMoodGoalUpdatedAt', monthlyGoalUpdatedAt);
     this.trackLocalMutation();
     this.syncCurrentSnapshotInBackground();
+    wx.showToast({ title: '目标已更新', icon: 'success' });
   },
 
   // ==================== 明信片视图 ====================

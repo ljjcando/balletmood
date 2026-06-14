@@ -297,6 +297,8 @@ balletmood/
 - 优化保存记录的响应速度：本地保存后立即反馈"已保存"，云端同步移到后台静默进行，无需再等待 2-4 秒
 - 大幅提升跨设备同步速度：保存单条记录时改走精准更新（按 _openid + dateKey 直接定位云端文档），跨设备从 8-10 秒缩短到约 1-2 秒
 - 修复删除记录后另一台设备刷新看不到删除的问题：`fetchLatestCloudSnapshot` 不再提前剥离 isDeleted 项，让 freshness 比较能识别删除事件的时间戳
+- 修复本月目标失焦保存后没有任何反馈、用户以为没保存成功的问题：保存时新增"目标已更新"toast
+- 修复修改本月目标后另一台设备无法识别变化的问题：profile schema 给 goal 加上 `goalUpdatedAt` 时间戳（与 terms / courseTags 一视同仁），freshness 比较时能识别 goal 的独立变更
 
 #### 本次解决的 Bug / 逻辑问题
 - 移除 `pickNewerRecord` 中的 photo 兜底逻辑：当新版本 photo 为空、老版本 photo 有值时，旧逻辑会用老照片覆盖新版本的空值
@@ -309,6 +311,8 @@ balletmood/
 - 优化 `saveRecord` 的保存反馈：从"等待 `await pushSnapshotToCloud` 串行完成后再提示成功"，改为本地保存后立即提示成功、云端同步由 `syncCurrentSnapshotInBackground` 后台进行，与项目其他写入流程的设计保持一致
 - 新增 `saveSingleRecordToCloud` 精准同步函数，单条记录的保存改走轻量路径，不再调用 `fetchStructuredCloudSnapshot` 拉全量、也不再 `saveRecordSnapshot` 重写所有记录；启动/术语/目标/课程标签/删除等其他场景继续走原有全量同步以保证数据完整性
 - 修复 `fetchLatestCloudSnapshot` 在返回前提前调用 `stripDeletedSnapshot` 把已删除项擦掉，导致上层 `shouldApplyCloudSnapshot` 通过 freshness 比较时看不到删除事件时间戳的问题；改为返回完整 snapshot，由 `applySnapshotToPageAndRender` 在展示前 strip，并在云端来源时同步写回本地缓存
+- 修复本月目标缺少独立 `goalUpdatedAt` 字段，导致 `mergeSnapshots` 用 `||` 短路合并、`getSnapshotFreshness` 比较时也看不到 goal 变化的问题；与 terms / courseTags 一致地引入 `goalUpdatedAt` 时间戳，写本地存储、写云端 profile、读云端 profile、`buildCurrentSnapshot`、`getSnapshotFreshness` 全链路同步处理
+- `saveGoal` 增加幂等检查（值未变则跳过 setData/同步/toast）和成功反馈（"目标已更新" toast），并把 goal 升级为时间戳驱动的可识别变更
 
 #### 修复总结
 - 数据层：移除 `pickNewerRecord` 中的 photo 兜底，主动删除照片在所有保存/同步场景下都能生效
@@ -399,6 +403,7 @@ balletmood/
 - ⚡ 优化保存记录的响应速度：本地保存后立即提示成功，云端同步移到后台
 - 🚄 单条记录改走精准同步路径，跨设备同步从 8-10 秒缩短到约 1-2 秒
 - 🗑️ 修复删除记录后另一台设备刷新无法看到删除的问题
+- 🎯 修复本月目标改完没有反馈、另一台设备也看不到的问题（新增"目标已更新"toast + goal 加入时间戳驱动同步）
 - ✂️ 移除 v1.0.4 历史遗留的 photo 兜底逻辑（当前架构已无必要）
 
 ### v1.0.5 (2026-06-12)

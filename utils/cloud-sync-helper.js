@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
   terms: 'balletMoodTerms',
   termsUpdatedAt: 'balletMoodTermsUpdatedAt',
   goal: 'balletMoodGoal',
+  goalUpdatedAt: 'balletMoodGoalUpdatedAt',
   courseTags: 'balletMoodCourseTags',
   courseTagsUpdatedAt: 'balletMoodCourseTagsUpdatedAt'
 };
@@ -286,6 +287,7 @@ function getDefaultSnapshot() {
     terms: [...DEFAULT_TERMS],
     termsUpdatedAt: '',
     goal: '',
+    goalUpdatedAt: '',
     courseTags: normalizeCourseTags(DEFAULT_COURSE_TAGS),
     courseTagsUpdatedAt: ''
   };
@@ -300,6 +302,7 @@ function normalizeSnapshot(snapshot = {}) {
     terms: Array.isArray(snapshot.terms) && snapshot.terms.length > 0 ? snapshot.terms : defaults.terms,
     termsUpdatedAt: normalizeMetadataTimestamp(snapshot.termsUpdatedAt),
     goal: typeof snapshot.goal === 'string' ? snapshot.goal : defaults.goal,
+    goalUpdatedAt: normalizeMetadataTimestamp(snapshot.goalUpdatedAt),
     courseTags: normalizeCourseTags(snapshot.courseTags),
     courseTagsUpdatedAt: normalizeMetadataTimestamp(snapshot.courseTagsUpdatedAt)
   };
@@ -322,12 +325,20 @@ function mergeSnapshots(localSnapshot = {}, cloudSnapshot = {}) {
     cloudUpdatedAt: normalizedCloudSnapshot.courseTagsUpdatedAt,
     fallbackMerge: mergeCourseTags
   });
+  const mergedGoal = pickMergedProfileValue({
+    localValue: normalizedLocalSnapshot.goal,
+    cloudValue: normalizedCloudSnapshot.goal,
+    localUpdatedAt: normalizedLocalSnapshot.goalUpdatedAt,
+    cloudUpdatedAt: normalizedCloudSnapshot.goalUpdatedAt,
+    fallbackMerge: (localValue, cloudValue) => localValue || cloudValue || ''
+  });
 
   return {
     records: mergeRecords(normalizedLocalSnapshot.records, normalizedCloudSnapshot.records),
     terms: mergedTerms.value,
     termsUpdatedAt: mergedTerms.updatedAt,
-    goal: normalizedLocalSnapshot.goal || normalizedCloudSnapshot.goal || '',
+    goal: mergedGoal.value,
+    goalUpdatedAt: mergedGoal.updatedAt,
     courseTags: mergedCourseTags.value,
     courseTagsUpdatedAt: mergedCourseTags.updatedAt
   };
@@ -339,6 +350,7 @@ function readLocalSnapshot(wxApi = wx) {
     terms: wxApi.getStorageSync(STORAGE_KEYS.terms),
     termsUpdatedAt: wxApi.getStorageSync(STORAGE_KEYS.termsUpdatedAt),
     goal: wxApi.getStorageSync(STORAGE_KEYS.goal),
+    goalUpdatedAt: wxApi.getStorageSync(STORAGE_KEYS.goalUpdatedAt),
     courseTags: wxApi.getStorageSync(STORAGE_KEYS.courseTags),
     courseTagsUpdatedAt: wxApi.getStorageSync(STORAGE_KEYS.courseTagsUpdatedAt)
   });
@@ -350,6 +362,7 @@ function writeLocalSnapshot(snapshot, wxApi = wx) {
   wxApi.setStorageSync(STORAGE_KEYS.terms, normalized.terms);
   wxApi.setStorageSync(STORAGE_KEYS.termsUpdatedAt, normalized.termsUpdatedAt);
   wxApi.setStorageSync(STORAGE_KEYS.goal, normalized.goal);
+  wxApi.setStorageSync(STORAGE_KEYS.goalUpdatedAt, normalized.goalUpdatedAt);
   wxApi.setStorageSync(STORAGE_KEYS.courseTags, normalized.courseTags);
   wxApi.setStorageSync(STORAGE_KEYS.courseTagsUpdatedAt, normalized.courseTagsUpdatedAt);
   return normalized;
@@ -422,6 +435,7 @@ function buildProfilePayload(snapshot) {
     terms: normalized.terms,
     termsUpdatedAt: normalized.termsUpdatedAt ? new Date(normalized.termsUpdatedAt) : null,
     goal: normalized.goal,
+    goalUpdatedAt: normalized.goalUpdatedAt ? new Date(normalized.goalUpdatedAt) : null,
     courseTags: normalized.courseTags,
     courseTagsUpdatedAt: normalized.courseTagsUpdatedAt ? new Date(normalized.courseTagsUpdatedAt) : null,
     updatedAt: new Date(),
@@ -571,6 +585,7 @@ async function fetchStructuredCloudSnapshot(wxApi = wx) {
     terms: profileDoc && profileDoc.terms,
     termsUpdatedAt: profileDoc && profileDoc.termsUpdatedAt,
     goal: profileDoc && profileDoc.goal,
+    goalUpdatedAt: profileDoc && profileDoc.goalUpdatedAt,
     courseTags: profileDoc && profileDoc.courseTags,
     courseTagsUpdatedAt: profileDoc && profileDoc.courseTagsUpdatedAt
   });
