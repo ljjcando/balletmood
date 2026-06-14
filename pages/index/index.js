@@ -13,6 +13,7 @@ const {
   restoreFromCloudIfLocalEmpty,
   pushSnapshotToCloud,
   saveSingleRecordToCloud,
+  deleteSingleRecordInCloud,
   fetchLatestCloudSnapshot,
   stripDeletedSnapshot,
   writeLocalSnapshot
@@ -281,6 +282,21 @@ Page({
       })
       .catch((error) => {
         console.log('[index] syncSingleRecordInBackground failed:', error && error.message);
+      });
+
+    this.pendingCloudSyncPromise = nextSync;
+    return nextSync.catch(() => {});
+  },
+
+  syncSingleRecordDeleteInBackground(dateKey) {
+    const previousSync = this.pendingCloudSyncPromise || Promise.resolve();
+    const nextSync = previousSync
+      .catch(() => {})
+      .then(async () => {
+        await deleteSingleRecordInCloud(dateKey, wx);
+      })
+      .catch((error) => {
+        console.log('[index] syncSingleRecordDeleteInBackground failed:', error && error.message);
       });
 
     this.pendingCloudSyncPromise = nextSync;
@@ -1098,8 +1114,9 @@ Page({
       content: '确定要删除这条记录吗？',
       success: (res) => {
         if (res.confirm) {
+          const selectedDate = this.data.selectedDate;
           const allRecords = { ...this.data.allRecords };
-          delete allRecords[this.data.selectedDate];
+          delete allRecords[selectedDate];
           this.trackLocalMutation();
 
           this.setData({
@@ -1107,10 +1124,8 @@ Page({
             allRecords: normalizePageRecords(allRecords)
           });
           wx.setStorageSync('balletMoodData', allRecords);
-          this.syncCurrentSnapshotInBackground(allRecords, {
-            replaceRecords: true,
-            deletedRecordDates: [this.data.selectedDate]
-          });
+          // 走精准删除路径：按 dateKey 把云端所有匹配文档标记为 isDeleted=true
+          this.syncSingleRecordDeleteInBackground(selectedDate);
 
           this.closeEditModal();
           this.renderCalendar();
@@ -1197,8 +1212,9 @@ Page({
       content: '确定要删除这条记录吗？',
       success: (res) => {
         if (res.confirm) {
+          const selectedDate = this.data.selectedDate;
           const allRecords = { ...this.data.allRecords };
-          delete allRecords[this.data.selectedDate];
+          delete allRecords[selectedDate];
           this.trackLocalMutation();
 
           this.setData({
@@ -1206,10 +1222,8 @@ Page({
             allRecords: normalizePageRecords(allRecords)
           });
           wx.setStorageSync('balletMoodData', allRecords);
-          this.syncCurrentSnapshotInBackground(allRecords, {
-            replaceRecords: true,
-            deletedRecordDates: [this.data.selectedDate]
-          });
+          // 走精准删除路径：按 dateKey 把云端所有匹配文档标记为 isDeleted=true
+          this.syncSingleRecordDeleteInBackground(selectedDate);
 
           this.closePostcard();
           this.renderCalendar();

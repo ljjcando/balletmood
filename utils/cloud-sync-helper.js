@@ -736,6 +736,59 @@ async function saveSingleRecordToCloud(dateKey, record, wxApi = wx) {
   return { type: 'add', docId: addResult._id, record: finalRecord };
 }
 
+async function deleteSingleRecordInCloud(dateKey, wxApi = wx) {
+  const normalizedDateKey = normalizeRecordDateKey(dateKey);
+  if (!normalizedDateKey) {
+    return null;
+  }
+
+  const collection = getRecordCollection(wxApi);
+  const pageSize = 20;
+  const allDocs = [];
+  let offset = 0;
+
+  while (true) {
+    const result = await collection
+      .where({
+        _openid: '{openid}',
+        dateKey: normalizedDateKey
+      })
+      .skip(offset)
+      .limit(pageSize)
+      .get();
+
+    const docs = Array.isArray(result.data) ? result.data : [];
+    allDocs.push(...docs);
+
+    if (docs.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  const deletedTimestamp = new Date().toISOString();
+  const payload = buildRecordPayload(normalizedDateKey, {
+    note: '',
+    photo: '',
+    terms: [],
+    bodyParts: [],
+    courses: [],
+    isDeleted: true,
+    deletedAt: deletedTimestamp,
+    updatedAt: deletedTimestamp
+  });
+
+  if (allDocs.length === 0) {
+    const addResult = await collection.add({ data: payload });
+    return { type: 'add', count: 1, docId: addResult._id };
+  }
+
+  for (const doc of allDocs) {
+    if (!doc || !doc._id) continue;
+    await collection.doc(doc._id).update({ data: payload });
+  }
+
+  return { type: 'update', count: allDocs.length };
+}
+
 async function migrateLegacySnapshotToStructuredCloud(wxApi = wx) {
   const legacyDoc = await getCurrentUserDoc(wxApi);
   if (!legacyDoc || !legacyDoc.records || Object.keys(legacyDoc.records).length === 0) {
@@ -909,6 +962,7 @@ module.exports = {
   getCurrentUserDoc,
   pushSnapshotToCloud,
   saveSingleRecordToCloud,
+  deleteSingleRecordInCloud,
   backupLocalToCloudIfNeeded,
   migrateLocalSnapshotToCloud,
   restoreFromCloudIfLocalEmpty,
