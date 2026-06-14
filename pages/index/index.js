@@ -13,7 +13,9 @@ const {
   restoreFromCloudIfLocalEmpty,
   pushSnapshotToCloud,
   saveSingleRecordToCloud,
-  fetchLatestCloudSnapshot
+  fetchLatestCloudSnapshot,
+  stripDeletedSnapshot,
+  writeLocalSnapshot
 } = require('../../utils/cloud-sync-helper');
 
 function normalizePageRecordDateKey(key) {
@@ -211,9 +213,16 @@ Page({
 
   async applySnapshotToPageAndRender(snapshot, source) {
     const safeSnapshot = snapshot || getDefaultSnapshot();
+    const visibleSnapshot = stripDeletedSnapshot(safeSnapshot);
 
-    await this.applySnapshotToPage(safeSnapshot);
+    await this.applySnapshotToPage(visibleSnapshot);
     await this.renderCalendar();
+
+    // 云端来源的 snapshot 已经反映完整最新状态：把可见版本写回本地，
+    // 避免下次启动时本地缓存仍含已删除记录、出现"删了又冒出来"的短暂闪烁
+    if (typeof source === 'string' && source.indexOf('cloud') === 0) {
+      writeLocalSnapshot(visibleSnapshot, wx);
+    }
   },
 
   buildCurrentSnapshot(nextRecords) {

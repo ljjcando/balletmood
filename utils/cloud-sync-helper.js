@@ -867,10 +867,10 @@ async function fetchLatestCloudSnapshot(wxApi = wx) {
     snapshot = await migrateLegacySnapshotToStructuredCloud(wxApi);
   }
 
-  const visibleSnapshot = snapshot ? stripDeletedSnapshot(snapshot) : null;
-
-  return visibleSnapshot && visibleSnapshot.records && Object.keys(visibleSnapshot.records).length > 0
-    ? normalizeSnapshot(visibleSnapshot)
+  // 返回带 isDeleted 的完整 snapshot，让调用方在 freshness 比较时
+  // 能看到删除事件的时间戳；调用方负责在展示前调用 stripDeletedSnapshot
+  return snapshot && snapshot.records && Object.keys(snapshot.records).length > 0
+    ? normalizeSnapshot(snapshot)
     : null;
 }
 
@@ -899,5 +899,6 @@ module.exports = {
   restoreFromCloudIfLocalEmpty,
   fetchLatestCloudSnapshot,
   fetchStructuredCloudSnapshot,
-  migrateLegacySnapshotToStructuredCloud
+  migrateLegacySnapshotToStructuredCloud,
+  stripDeletedSnapshot
 };
