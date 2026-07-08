@@ -20,6 +20,7 @@ page {
 .header {
   text-align: center;
   margin-bottom: 40rpx;
+  position: relative;
 }
 
 .header-title {
@@ -34,6 +35,29 @@ page {
   color: #8B8680;
   display: block;
   margin-top: 10rpx;
+}
+
+.refresh-btn {
+  position: absolute;
+  right: 20rpx;
+  top: 0;
+  font-size: 32rpx;
+  padding: 10rpx;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.refresh-btn:active {
+  opacity: 1;
+}
+
+.refresh-btn.refreshing {
+  animation: refresh-spin 0.8s linear infinite;
+}
+
+@keyframes refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* ==================== 月份导航 ==================== */

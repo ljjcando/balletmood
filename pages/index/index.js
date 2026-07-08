@@ -68,6 +68,9 @@ Page({
     monthlyGoal: '',
     monthlyGoalUpdatedAt: '',
 
+    // 刷新按钮状态
+    isRefreshing: false,
+
     // 弹窗状态
     showEditModal: false,
     showTermsModal: false,
@@ -436,6 +439,19 @@ Page({
   async onPullDownRefresh() {
     await this.onRefresh();
     wx.stopPullDownRefresh();
+  },
+
+  async onRefreshTap() {
+    if (this.data.isRefreshing) {
+      return;
+    }
+    this.setData({ isRefreshing: true });
+    try {
+      await this.onRefresh();
+      wx.showToast({ title: '已刷新', icon: 'success' });
+    } finally {
+      this.setData({ isRefreshing: false });
+    }
   },
 
   onShow() {
