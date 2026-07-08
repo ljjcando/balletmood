@@ -11,7 +11,7 @@
       <text
         class="refresh-btn {{isRefreshing ? 'refreshing' : ''}}"
         bindtap="onRefreshTap"
-      >🔄</text>
+      >🩰</text>
     </view>
 
     <!-- 月份导航 -->
