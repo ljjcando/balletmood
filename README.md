@@ -300,6 +300,7 @@ balletmood/
 - 修复本月目标失焦保存后没有任何反馈、用户以为没保存成功的问题：保存时新增"目标已更新"toast
 - 修复修改本月目标后另一台设备无法识别变化的问题：profile schema 给 goal 加上 `goalUpdatedAt` 时间戳（与 terms / courseTags 一视同仁），freshness 比较时能识别 goal 的独立变更
 - 修复删除记录后 2-3 秒被云端"复活"、跨设备/重启同步失败的问题：新增 `deleteSingleRecordInCloud` 精准删除函数（按 dateKey 把云端所有匹配文档批量标记 isDeleted=true），删除流程改走轻量可靠路径，不再依赖原有长链路
+- 大幅提升电脑端启动同步速度：从"先做完整同步再显示最新"改为"先快速拉云端 apply、后台再做兜底 push"，跨设备场景下用户几秒内就能看到另一台设备的最新更新，不再需要等 30-60 秒（云端历史脏文档多时尤其明显）
 
 #### 本次解决的 Bug / 逻辑问题
 - 移除 `pickNewerRecord` 中的 photo 兜底逻辑：当新版本 photo 为空、老版本 photo 有值时，旧逻辑会用老照片覆盖新版本的空值
@@ -315,6 +316,7 @@ balletmood/
 - 修复本月目标缺少独立 `goalUpdatedAt` 字段，导致 `mergeSnapshots` 用 `||` 短路合并、`getSnapshotFreshness` 比较时也看不到 goal 变化的问题；与 terms / courseTags 一致地引入 `goalUpdatedAt` 时间戳，写本地存储、写云端 profile、读云端 profile、`buildCurrentSnapshot`、`getSnapshotFreshness` 全链路同步处理
 - `saveGoal` 增加幂等检查（值未变则跳过 setData/同步/toast）和成功反馈（"目标已更新" toast），并把 goal 升级为时间戳驱动的可识别变更
 - 删除流程从全量同步链路（`syncCurrentSnapshotInBackground` + `deletedRecordDates` + `replaceRecords`）改走精准路径：新增 `deleteSingleRecordInCloud(dateKey)` 按 dateKey 拉云端所有匹配文档（支持分页）后批量 update 为 `isDeleted=true`，并新增 `syncSingleRecordDeleteInBackground` 在后台触发；`deleteRecord` 和 `deleteFromPostcard` 都改用新路径，避免原链路上 update 被静默吞错导致云端 isDeleted 一直停在 false 的问题，同时顺手处理历史"重复 add"累积的多份脏文档
+- 修复 `loadStorageData` 里 `hasLocalRecords` 分支的启动同步顺序问题：原逻辑是本地渲染后同步等待 `migrateLocalSnapshotToCloud` 全量同步完成（内部要拉云端所有历史 records、合并、逐条 update 回云端），云端有大量脏文档时会阻塞 30-60 秒，跨设备最新数据迟迟看不到；改为先调用 `fetchLatestCloudSnapshot` 快速拉云端最新快照 apply 到页面（几秒内看见），随后再后台跑 `migrateLocalSnapshotToCloud` 作为兜底 push（失败不影响页面显示，本地可能未同步的更新仍能被后台推到云端）
 
 #### 修复总结
 - 数据层：移除 `pickNewerRecord` 中的 photo 兜底，主动删除照片在所有保存/同步场景下都能生效
@@ -407,6 +409,7 @@ balletmood/
 - 🗑️ 修复删除记录后另一台设备刷新无法看到删除的问题
 - 🎯 修复本月目标改完没有反馈、另一台设备也看不到的问题（新增"目标已更新"toast + goal 加入时间戳驱动同步）
 - 🚮 修复删除记录 2-3 秒后被云端"复活"、跨设备同步失败的问题（删除走精准路径，云端所有同 dateKey 文档一次性标记删除）
+- 🚀 电脑端启动同步大幅提速：改为先读云端快照 apply，再后台补 push，跨设备最新数据 2-3 秒可见（原来卡 30-60 秒）
 - ✂️ 移除 v1.0.4 历史遗留的 photo 兜底逻辑（当前架构已无必要）
 
 ### v1.0.5 (2026-06-12)

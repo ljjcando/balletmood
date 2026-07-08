@@ -376,16 +376,27 @@ Page({
       await this.applySnapshotToPageAndRender(localSnapshot, 'local-startup');
 
       if (hasLocalRecords(wx)) {
-        this.startupSyncPromise = migrateLocalSnapshotToCloud(wx)
-          .then(async (migrationResult) => {
-            await this.applyAsyncSnapshotIfCurrent(
-              migrationResult.snapshot || readLocalSnapshot(wx),
-              initialMutationVersion,
-              'local-full-sync'
-            );
+        // 优先：快速拉云端最新快照 apply 到页面，让用户几秒内看到跨设备最新数据
+        // 之前逻辑是先跑 migrateLocalSnapshotToCloud 全量同步再 apply，云端记录多时会卡 30-60 秒
+        this.startupSyncPromise = fetchLatestCloudSnapshot(wx)
+          .then(async (cloudSnapshot) => {
+            if (cloudSnapshot) {
+              await this.applyAsyncSnapshotIfCurrent(
+                cloudSnapshot,
+                initialMutationVersion,
+                'cloud-startup'
+              );
+            }
           })
           .catch((error) => {
-            console.log('[index] startup migration failed after local render:', error && error.message);
+            console.log('[index] startup cloud fetch failed after local render:', error && error.message);
+          })
+          .then(() => {
+            // 兜底：后台再跑 migrateLocalSnapshotToCloud，把可能未同步的本地更新推到云端
+            // 失败不影响页面显示（用户已经看到云端最新数据）
+            return migrateLocalSnapshotToCloud(wx).catch((error) => {
+              console.log('[index] background migrate after startup failed:', error && error.message);
+            });
           });
         return;
       }
