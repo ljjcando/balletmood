@@ -80,22 +80,25 @@ function createWxStub({
               return {
                 where() {
                   whereCalls += 1;
+                  let currentSkip = 0;
                   const queryApi = {
                     async get() {
-                      return { data: currentQueryResult };
+                      return { data: currentSkip === 0 ? currentQueryResult : [] };
+                    },
+                    skip(n) {
+                      currentSkip = n || 0;
+                      return queryApi;
                     },
                     limit() {
                       return {
                         async get() {
-                          return { data: currentQueryResult };
+                          return { data: currentSkip === 0 ? currentQueryResult : [] };
                         }
                       };
                     }
                   };
 
-                  return {
-                    ...queryApi
-                  };
+                  return queryApi;
                 },
                 doc() {
                   return {
