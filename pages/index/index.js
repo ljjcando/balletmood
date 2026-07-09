@@ -439,6 +439,7 @@ Page({
   async onPullDownRefresh() {
     await this.onRefresh();
     wx.stopPullDownRefresh();
+    wx.showToast({ title: '已刷新', icon: 'success' });
   },
 
   async onRefreshTap() {
