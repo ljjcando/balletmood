@@ -655,27 +655,10 @@ async function saveRecordSnapshot(snapshot, wxApi = wx, options = {}) {
   }
 
   for (const dateKey of deletedRecordDates) {
-    const deletedTimestamp = new Date().toISOString();
-    const payload = buildRecordPayload(dateKey, {
-      note: '',
-      photo: '',
-      terms: [],
-      bodyParts: [],
-      courses: [],
-      isDeleted: true,
-      deletedAt: deletedTimestamp,
-      updatedAt: deletedTimestamp
-    });
     const existingDoc = existingByDate[dateKey];
 
     if (existingDoc && existingDoc._id) {
-      await collection.doc(existingDoc._id).update({
-        data: payload
-      });
-    } else {
-      await collection.add({
-        data: payload
-      });
+      await collection.doc(existingDoc._id).remove();
     }
   }
 
@@ -713,16 +696,15 @@ async function saveSingleRecordToCloud(dateKey, record, wxApi = wx) {
       _openid: '{openid}',
       dateKey: normalizedDateKey
     })
-    .limit(1)
     .get();
 
-  const existingDoc = Array.isArray(existingResult.data) ? existingResult.data[0] : null;
+  const existingDocs = Array.isArray(existingResult.data) ? existingResult.data : [];
   const payload = buildRecordPayload(normalizedDateKey, finalRecord);
 
-  if (existingDoc && existingDoc._id) {
+  if (existingDocs.length > 0) {
+    const keepDoc = existingDocs[0];
     try {
-      await collection.doc(existingDoc._id).update({ data: payload });
-      return { type: 'update', docId: existingDoc._id, record: finalRecord };
+      await collection.doc(keepDoc._id).update({ data: payload });
     } catch (error) {
       if (!(error && error.errCode === -401002)) {
         throw error;
@@ -730,6 +712,14 @@ async function saveSingleRecordToCloud(dateKey, record, wxApi = wx) {
       const addResult = await collection.add({ data: payload });
       return { type: 'add', docId: addResult._id, record: finalRecord };
     }
+
+    for (let i = 1; i < existingDocs.length; i++) {
+      if (existingDocs[i] && existingDocs[i]._id) {
+        await collection.doc(existingDocs[i]._id).remove();
+      }
+    }
+
+    return { type: 'update', docId: keepDoc._id, record: finalRecord, duplicatesRemoved: existingDocs.length - 1 };
   }
 
   const addResult = await collection.add({ data: payload });
@@ -764,29 +754,18 @@ async function deleteSingleRecordInCloud(dateKey, wxApi = wx) {
     offset += pageSize;
   }
 
-  const deletedTimestamp = new Date().toISOString();
-  const payload = buildRecordPayload(normalizedDateKey, {
-    note: '',
-    photo: '',
-    terms: [],
-    bodyParts: [],
-    courses: [],
-    isDeleted: true,
-    deletedAt: deletedTimestamp,
-    updatedAt: deletedTimestamp
-  });
-
   if (allDocs.length === 0) {
-    const addResult = await collection.add({ data: payload });
-    return { type: 'add', count: 1, docId: addResult._id };
+    return { type: 'none', count: 0 };
   }
 
+  let removed = 0;
   for (const doc of allDocs) {
     if (!doc || !doc._id) continue;
-    await collection.doc(doc._id).update({ data: payload });
+    await collection.doc(doc._id).remove();
+    removed++;
   }
 
-  return { type: 'update', count: allDocs.length };
+  return { type: 'remove', count: removed };
 }
 
 async function migrateLegacySnapshotToStructuredCloud(wxApi = wx) {

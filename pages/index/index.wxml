@@ -8,10 +8,6 @@
     <view class="header">
       <text class="header-title">Ballet Mood</text>
       <text class="header-subtitle">记录每一次优雅的进步</text>
-      <text
-        class="refresh-btn {{isRefreshing ? 'refreshing' : ''}}"
-        bindtap="onRefreshTap"
-      >🩰</text>
     </view>
 
     <!-- 月份导航 -->
@@ -82,7 +78,7 @@
       <view class="photo-section">
         <view class="photo-upload-mini">
           <image
-            wx:if="{{currentPhoto && !currentPhotoExpired}}"
+            wx:if="{{showEditModal && currentPhoto && !currentPhotoExpired}}"
             class="photo-thumb"
             src="{{currentPhoto}}"
             mode="aspectFill"
@@ -241,7 +237,7 @@
         </view>
       </view>
 
-      <view class="postcard-image-wrapper" wx:if="{{postcardData.photo || postcardData.photoExpired}}">
+      <view class="postcard-image-wrapper" wx:if="{{showPostcard && (postcardData.photo || postcardData.photoExpired)}}">
         <image
           wx:if="{{postcardData.photo}}"
           class="postcard-image"

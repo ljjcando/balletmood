@@ -37,31 +37,6 @@ page {
   margin-top: 10rpx;
 }
 
-.refresh-btn {
-  position: absolute;
-  right: 20rpx;
-  top: 0;
-  font-size: 40rpx;
-  padding: 10rpx;
-  opacity: 0.7;
-  transition: opacity 0.2s ease;
-  transform-origin: 50% 50%;
-  display: inline-block;
-}
-
-.refresh-btn:active {
-  opacity: 1;
-}
-
-.refresh-btn.refreshing {
-  animation: refresh-spin 1.2s linear infinite;
-}
-
-@keyframes refresh-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
 /* ==================== 月份导航 ==================== */
 .month-nav {
   display: flex;

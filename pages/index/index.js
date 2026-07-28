@@ -69,7 +69,6 @@ Page({
     monthlyGoalUpdatedAt: '',
 
     // 刷新按钮状态
-    isRefreshing: false,
 
     // 弹窗状态
     showEditModal: false,
@@ -440,19 +439,6 @@ Page({
     await this.onRefresh();
     wx.stopPullDownRefresh();
     wx.showToast({ title: '已刷新', icon: 'success' });
-  },
-
-  async onRefreshTap() {
-    if (this.data.isRefreshing) {
-      return;
-    }
-    this.setData({ isRefreshing: true });
-    try {
-      await this.onRefresh();
-      wx.showToast({ title: '已刷新', icon: 'success' });
-    } finally {
-      this.setData({ isRefreshing: false });
-    }
   },
 
   onShow() {
@@ -1152,7 +1138,6 @@ Page({
             allRecords: normalizePageRecords(allRecords)
           });
           wx.setStorageSync('balletMoodData', allRecords);
-          // 走精准删除路径：按 dateKey 把云端所有匹配文档标记为 isDeleted=true
           this.syncSingleRecordDeleteInBackground(selectedDate);
 
           this.closeEditModal();
@@ -1223,7 +1208,7 @@ Page({
   },
 
   closePostcard() {
-    this.setData({ showPostcard: false });
+    this.setData({ showPostcard: false, postcardData: {} });
   },
 
   editFromPostcard() {
@@ -1250,7 +1235,6 @@ Page({
             allRecords: normalizePageRecords(allRecords)
           });
           wx.setStorageSync('balletMoodData', allRecords);
-          // 走精准删除路径：按 dateKey 把云端所有匹配文档标记为 isDeleted=true
           this.syncSingleRecordDeleteInBackground(selectedDate);
 
           this.closePostcard();

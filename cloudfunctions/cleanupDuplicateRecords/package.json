@@ -1,0 +1,9 @@
+{
+  "name": "cleanupDuplicateRecords",
+  "version": "1.0.0",
+  "description": "Cleanup duplicate documents in ballet_mood_records (v1.0.4-era add/update bug residue)",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}
