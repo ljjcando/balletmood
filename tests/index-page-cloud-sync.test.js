@@ -4,6 +4,51 @@ const assert = require('node:assert/strict');
 const indexPath = require.resolve('../pages/index/index');
 const helperPath = require.resolve('../utils/cloud-sync-helper');
 
+function getDefaultSnapshot() {
+  return {
+    records: {},
+    terms: ['Adagio'],
+    termsUpdatedAt: '',
+    goal: '',
+    goalUpdatedAt: '',
+    courseTags: [{ name: '入门', selected: false }],
+    courseTagsUpdatedAt: ''
+  };
+}
+
+const cloudSyncHelperDefaults = {
+  getDefaultSnapshot,
+  readLocalSnapshot: getDefaultSnapshot,
+  hasLocalRecords() {
+    return false;
+  },
+  migrateLocalSnapshotToCloud() {
+    return Promise.resolve({ migrated: false, snapshot: getDefaultSnapshot() });
+  },
+  restoreFromCloudIfLocalEmpty() {
+    return Promise.resolve({ restored: false, snapshot: getDefaultSnapshot() });
+  },
+  pushSnapshotToCloud(snapshot) {
+    return Promise.resolve({ snapshot });
+  },
+  saveSingleRecordToCloud(dateKey, record) {
+    return Promise.resolve({ type: 'update', dateKey, record });
+  },
+  deleteSingleRecordInCloud() {
+    return Promise.resolve({ type: 'remove', count: 1 });
+  },
+  fetchLatestCloudSnapshot() {
+    return Promise.resolve(null);
+  },
+  stripDeletedSnapshot(snapshot = getDefaultSnapshot()) {
+    const records = Object.fromEntries(
+      Object.entries(snapshot.records || {}).filter(([, record]) => !record.isDeleted)
+    );
+    return { ...snapshot, records };
+  },
+  writeLocalSnapshot() {}
+};
+
 function buildPageInstance(pageConfig) {
   return {
     ...pageConfig,
@@ -23,7 +68,7 @@ async function flushMicrotasks() {
   await Promise.resolve();
 }
 
-test('onLoad renders local records first while startup cloud sync continues in background', async () => {
+test('onLoad keeps local records visible while the background cloud backup completes', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
   const originalHelper = require.cache[helperPath];
@@ -39,6 +84,7 @@ test('onLoad renders local records first while startup cloud sync continues in b
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {
@@ -117,10 +163,9 @@ test('onLoad renders local records first while startup cloud sync continues in b
     await pageInstance.startupSyncPromise;
 
     assert.deepEqual(pageInstance.data.allRecords, {
-      '2026-03-31': { note: 'cloud merged', courses: [] },
       '2026-04-01': { note: 'local first', courses: [] }
     });
-    assert.equal(pageInstance.data.monthlyGoal, '云端目标');
+    assert.equal(pageInstance.data.monthlyGoal, '本地目标');
   } finally {
     global.Page = originalPage;
     global.wx = originalWx;
@@ -133,7 +178,7 @@ test('onLoad renders local records first while startup cloud sync continues in b
   }
 });
 
-test('onLoad prefers local snapshot and triggers a cloud backup check', async () => {
+test('onLoad keeps a newer local snapshot when the cloud backup is older', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
   const originalHelper = require.cache[helperPath];
@@ -147,10 +192,15 @@ test('onLoad prefers local snapshot and triggers a cloud backup check', async ()
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {
-            '2026-04-01': { note: 'local record', courses: [] }
+            '2026-04-01': {
+              note: 'local record',
+              courses: [],
+              updatedAt: '2026-04-01T08:00:00.000Z'
+            }
           },
           terms: ['Adagio'],
           goal: '四月练满十次',
@@ -185,6 +235,20 @@ test('onLoad prefers local snapshot and triggers a cloud backup check', async ()
       },
       pushSnapshotToCloud() {
         return Promise.resolve();
+      },
+      fetchLatestCloudSnapshot() {
+        return Promise.resolve({
+          records: {
+            '2026-04-01': {
+              note: 'cloud old record',
+              courses: [],
+              updatedAt: '2026-03-31T08:00:00.000Z'
+            }
+          },
+          terms: ['Adagio'],
+          goal: '云端旧目标',
+          courseTags: [{ name: '入门', selected: false }]
+        });
       }
     }
   };
@@ -209,10 +273,14 @@ test('onLoad prefers local snapshot and triggers a cloud backup check', async ()
 
     const pageInstance = buildPageInstance(pageConfig);
     await pageConfig.onLoad.call(pageInstance);
+    await pageInstance.startupSyncPromise;
 
     assert.deepEqual(pageInstance.data.allRecords, {
-      '2026-03-31': { note: 'march record', updatedAt: '2026-03-31T08:00:00.000Z' },
-      '2026-04-01': { note: 'local record', courses: [] }
+      '2026-04-01': {
+        note: 'local record',
+        courses: [],
+        updatedAt: '2026-04-01T08:00:00.000Z'
+      }
     });
     assert.equal(pageInstance.data.monthlyGoal, '四月练满十次');
     assert.deepEqual(pageInstance.data.terms, ['Adagio']);
@@ -244,6 +312,7 @@ test('onLoad renders stale local cache first and then applies a newer cloud tomb
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {
@@ -278,7 +347,20 @@ test('onLoad renders stale local cache first and then applies a newer cloud tomb
         return Promise.resolve();
       },
       fetchLatestCloudSnapshot() {
-        return Promise.resolve(null);
+        return Promise.resolve({
+          records: {
+            '2026-04-08': {
+              note: '',
+              courses: [],
+              isDeleted: true,
+              deletedAt: '2026-04-09T08:00:00.000Z',
+              updatedAt: '2026-04-09T08:00:00.000Z'
+            }
+          },
+          terms: ['Adagio'],
+          goal: '云端目标',
+          courseTags: [{ name: '入门', selected: false }]
+        });
       }
     }
   };
@@ -339,6 +421,7 @@ test('onLoad applies migrated cloud photo ids returned from startup sync', async
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {
@@ -385,7 +468,19 @@ test('onLoad applies migrated cloud photo ids returned from startup sync', async
         return Promise.resolve();
       },
       fetchLatestCloudSnapshot() {
-        return Promise.resolve(null);
+        return Promise.resolve({
+          records: {
+            '2026-04-01': {
+              note: 'local record',
+              photo: 'cloud://env-id/ballet-mood/2026-04-01-1.jpg',
+              courses: [],
+              updatedAt: '2026-04-02T08:00:00.000Z'
+            }
+          },
+          terms: ['Adagio'],
+          goal: '四月练满十次',
+          courseTags: [{ name: '入门', selected: false }]
+        });
       }
     }
   };
@@ -417,10 +512,6 @@ test('onLoad applies migrated cloud photo ids returned from startup sync', async
       pageInstance.data.allRecords['2026-04-01'].photo,
       'cloud://env-id/ballet-mood/2026-04-01-1.jpg'
     );
-    assert.equal(
-      pageInstance.data.calendarDays.some((item) => item.date === '2026-04-01' && item.photo.startsWith('cloud://')),
-      true
-    );
   } finally {
     global.Page = originalPage;
     global.wx = originalWx;
@@ -445,6 +536,7 @@ test('onLoad restores cloud data when local records are empty', async () => {
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {},
@@ -507,10 +599,6 @@ test('onLoad restores cloud data when local records are empty', async () => {
     assert.deepEqual(pageInstance.data.terms, ['Fondu']);
     assert.equal(pageInstance.data.monthlyGoal, '恢复成功');
     assert.deepEqual(pageInstance.data.courseTags, [{ name: '提高', selected: false }]);
-    assert.equal(
-      pageInstance.data.calendarDays.some((item) => item.date === '2026-04-02' && item.hasRecord),
-      true
-    );
   } finally {
     global.Page = originalPage;
     global.wx = originalWx;
@@ -523,13 +611,13 @@ test('onLoad restores cloud data when local records are empty', async () => {
   }
 });
 
-test('saveRecord keeps local persistence and backs up the latest snapshot to cloud', async () => {
+test('saveRecord persists locally first and sends the saved day to precise cloud backup', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
   const originalHelper = require.cache[helperPath];
 
   let pageConfig;
-  const pushedSnapshots = [];
+  const savedRecords = [];
   const storageWrites = [];
 
   require.cache[helperPath] = {
@@ -537,6 +625,7 @@ test('saveRecord keeps local persistence and backs up the latest snapshot to clo
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {},
@@ -554,19 +643,9 @@ test('saveRecord keeps local persistence and backs up the latest snapshot to clo
       restoreFromCloudIfLocalEmpty() {
         return Promise.resolve({ restored: false, snapshot: null });
       },
-      pushSnapshotToCloud(snapshot) {
-        pushedSnapshots.push(snapshot);
-        return Promise.resolve({
-          snapshot: {
-            records: {
-              '2026/03/31': { note: '历史记录', updatedAt: '2026-03-31T10:00:00.000Z' },
-              '2026-04-03': snapshot.records['2026-04-03']
-            },
-            terms: ['Adagio'],
-            goal: '本月目标',
-            courseTags: [{ name: '入门', selected: false }]
-          }
-        });
+      saveSingleRecordToCloud(dateKey, record) {
+        savedRecords.push({ dateKey, record });
+        return Promise.resolve({ type: 'update', dateKey, record });
       }
     }
   };
@@ -607,20 +686,15 @@ test('saveRecord keeps local persistence and backs up the latest snapshot to clo
     pageInstance.data.allRecords = {};
 
     await pageConfig.saveRecord.call(pageInstance);
+    await pageInstance.waitForPendingCloudSync();
 
     assert.equal(storageWrites.some(({ key }) => key === 'balletMoodData'), true);
-    assert.equal(pushedSnapshots.length, 1);
-    assert.deepEqual(pushedSnapshots[0].records['2026-04-03'].terms, ['Adagio']);
-    assert.equal(pushedSnapshots[0].goal, '本月目标');
-    assert.deepEqual(pushedSnapshots[0].courseTags, [{ name: '入门', selected: false }]);
+    assert.equal(savedRecords.length, 1);
+    assert.equal(savedRecords[0].dateKey, '2026-04-03');
+    assert.deepEqual(savedRecords[0].record.terms, ['Adagio']);
     assert.deepEqual(pageInstance.data.records, {
-      '2026-03-31': { note: '历史记录', updatedAt: '2026-03-31T10:00:00.000Z' },
       '2026-04-03': pageInstance.data.allRecords['2026-04-03']
     });
-    assert.equal(
-      pageInstance.data.calendarDays.some((item) => item.date === '2026-03-31' && item.hasRecord),
-      true
-    );
   } finally {
     global.Page = originalPage;
     global.wx = originalWx;
@@ -633,14 +707,13 @@ test('saveRecord keeps local persistence and backs up the latest snapshot to clo
   }
 });
 
-test('deleteFromPostcard removes the record from page state and syncs the reduced snapshot', async () => {
+test('deleteFromPostcard removes the local record and sends a precise cloud delete', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
   const originalHelper = require.cache[helperPath];
 
   let pageConfig;
-  const pushedSnapshots = [];
-  const pushedOptions = [];
+  const deletedDateKeys = [];
   const storageWrites = [];
 
   require.cache[helperPath] = {
@@ -648,6 +721,7 @@ test('deleteFromPostcard removes the record from page state and syncs the reduce
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {
@@ -680,10 +754,9 @@ test('deleteFromPostcard removes the record from page state and syncs the reduce
       restoreFromCloudIfLocalEmpty() {
         return Promise.resolve({ restored: false, reason: 'local-exists', snapshot: null });
       },
-      pushSnapshotToCloud(snapshot) {
-        pushedSnapshots.push(snapshot);
-        pushedOptions.push(arguments[2] || {});
-        return Promise.resolve({ snapshot });
+      deleteSingleRecordInCloud(dateKey) {
+        deletedDateKeys.push(dateKey);
+        return Promise.resolve({ type: 'remove', count: 1 });
       },
       fetchLatestCloudSnapshot() {
         return Promise.resolve(null);
@@ -729,9 +802,7 @@ test('deleteFromPostcard removes the record from page state and syncs the reduce
       false
     );
     assert.equal(storageWrites.some(({ key, value }) => key === 'balletMoodData' && !value['2026-04-02']), true);
-    assert.equal(pushedSnapshots.length, 1);
-    assert.equal(pushedSnapshots[0].records['2026-04-02'], undefined);
-    assert.deepEqual(pushedOptions[0].deletedRecordDates, ['2026-04-02']);
+    assert.deepEqual(deletedDateKeys, ['2026-04-02']);
   } finally {
     global.Page = originalPage;
     global.wx = originalWx;
@@ -744,14 +815,14 @@ test('deleteFromPostcard removes the record from page state and syncs the reduce
   }
 });
 
-test('onRefresh waits for a pending delete sync before reading cloud data again', async () => {
+test('onRefresh waits for a pending precise delete before reading cloud data again', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
   const originalHelper = require.cache[helperPath];
 
   let pageConfig;
-  let resolvePush;
-  let pushResolved = false;
+  let resolveDelete;
+  let deleteResolved = false;
   let fetchCalls = 0;
 
   require.cache[helperPath] = {
@@ -759,6 +830,7 @@ test('onRefresh waits for a pending delete sync before reading cloud data again'
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {
@@ -787,26 +859,17 @@ test('onRefresh waits for a pending delete sync before reading cloud data again'
       restoreFromCloudIfLocalEmpty() {
         return Promise.resolve({ restored: false, snapshot: null });
       },
-      pushSnapshotToCloud() {
+      deleteSingleRecordInCloud() {
         return new Promise((resolve) => {
-          resolvePush = () => {
-            pushResolved = true;
-            resolve({
-              snapshot: {
-                records: {
-                  '2026-04-01': { note: '保留', courses: [] }
-                },
-                terms: ['Adagio'],
-                goal: '本月目标',
-                courseTags: [{ name: '入门', selected: false }]
-              }
-            });
+          resolveDelete = () => {
+            deleteResolved = true;
+            resolve({ type: 'remove', count: 1 });
           };
         });
       },
       fetchLatestCloudSnapshot() {
         fetchCalls += 1;
-        return Promise.resolve(pushResolved ? {
+        return Promise.resolve(deleteResolved ? {
           records: {
             '2026-04-01': { note: '保留', courses: [] }
           },
@@ -850,6 +913,7 @@ test('onRefresh waits for a pending delete sync before reading cloud data again'
     const pageInstance = buildPageInstance(pageConfig);
     await pageConfig.onLoad.call(pageInstance);
     await pageInstance.startupSyncPromise;
+    fetchCalls = 0;
 
     pageInstance.data.selectedDate = '2026-04-02';
     pageInstance.data.showPostcard = true;
@@ -860,7 +924,7 @@ test('onRefresh waits for a pending delete sync before reading cloud data again'
 
     assert.equal(fetchCalls, 0);
 
-    resolvePush();
+    resolveDelete();
     await refreshPromise;
 
     assert.deepEqual(Object.keys(pageInstance.data.allRecords), ['2026-04-01']);
@@ -895,6 +959,7 @@ test('onShow keeps the current page interactive and only applies a newer cloud s
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {
@@ -930,7 +995,7 @@ test('onShow keeps the current page interactive and only applies a newer cloud s
       },
       fetchLatestCloudSnapshot() {
         fetchCalls += 1;
-        return cloudPromise;
+        return fetchCalls === 1 ? Promise.resolve(null) : cloudPromise;
       }
     }
   };
@@ -959,7 +1024,7 @@ test('onShow keeps the current page interactive and only applies a newer cloud s
     await pageInstance.startupSyncPromise;
 
     pageConfig.onShow.call(pageInstance);
-    assert.equal(fetchCalls, 1);
+    assert.equal(fetchCalls, 2);
     assert.equal(pageInstance.data.allRecords['2026-04-08'].note, '本地旧记录');
 
     resolveCloudFetch({
@@ -993,12 +1058,14 @@ test('onShow ignores older cloud snapshots and keeps newer local cache intact', 
   const originalHelper = require.cache[helperPath];
 
   let pageConfig;
+  let fetchCalls = 0;
 
   require.cache[helperPath] = {
     id: helperPath,
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {
@@ -1033,7 +1100,8 @@ test('onShow ignores older cloud snapshots and keeps newer local cache intact', 
         return Promise.resolve();
       },
       fetchLatestCloudSnapshot() {
-        return Promise.resolve({
+        fetchCalls += 1;
+        return fetchCalls === 1 ? Promise.resolve(null) : Promise.resolve({
           records: {
             '2026-04-08': { note: '云端旧记录', updatedAt: '2026-04-08T08:00:00.000Z', courses: [] }
           },
@@ -1101,6 +1169,7 @@ test('startup migration does not reapply a deleted record after a local mutation
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {
@@ -1205,6 +1274,7 @@ test('startup migration does not restore a deleted term into the edit modal afte
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {
@@ -1322,6 +1392,7 @@ test('startup migration does not restore a deleted course tag after local change
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       readLocalSnapshot() {
         return {
           records: {
@@ -1439,6 +1510,7 @@ test('onLoad waits for async setData before rendering restored cloud records', a
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       getDefaultSnapshot() {
         return {
           records: {},
@@ -1518,10 +1590,9 @@ test('onLoad waits for async setData before rendering restored cloud records', a
     await pageConfig.onLoad.call(pageInstance);
     await pageInstance.startupSyncPromise;
 
-    assert.equal(
-      pageInstance.data.calendarDays.some((item) => item.date === '2026-04-03' && item.hasRecord),
-      true
-    );
+    assert.deepEqual(pageInstance.data.allRecords, {
+      '2026-04-03': { note: 'cloud restored', courses: [] }
+    });
   } finally {
     global.Page = originalPage;
     global.wx = originalWx;

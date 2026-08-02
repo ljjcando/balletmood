@@ -219,7 +219,7 @@ test('pushSnapshotToCloud keeps a cloud tombstone so stale local records cannot 
   }
 });
 
-test('fetchLatestCloudSnapshot filters deleted tombstone docs out of the visible record snapshot', async () => {
+test('fetchLatestCloudSnapshot keeps legacy tombstones so freshness checks can see them', async () => {
   const originalHelper = require.cache[helperPath];
 
   try {
@@ -252,16 +252,9 @@ test('fetchLatestCloudSnapshot filters deleted tombstone docs out of the visible
 
     const snapshot = await fetchLatestCloudSnapshot(stub.wx);
 
-    assert.deepEqual(snapshot.records, {
-      '2026-04-07': {
-        note: '保留',
-        photo: '',
-        terms: [],
-        bodyParts: [],
-        courses: [],
-        updatedAt: '2026-04-07T09:00:00.000Z'
-      }
-    });
+    assert.equal(snapshot.records['2026-04-07'].note, '保留');
+    assert.equal(snapshot.records['2026-04-08'].isDeleted, true);
+    assert.equal(snapshot.records['2026-04-08'].deletedAt, '2026-04-12T10:00:00.000Z');
   } finally {
     if (originalHelper) {
       require.cache[helperPath] = originalHelper;
@@ -369,7 +362,7 @@ test('restoreFromCloudIfLocalEmpty skips same-user empty docs and restores the l
   }
 });
 
-test('restoreFromCloudIfLocalEmpty prefers the better record doc when the same date exists multiple times', async () => {
+test('restoreFromCloudIfLocalEmpty uses updatedAt when duplicate documents disagree', async () => {
   const originalHelper = require.cache[helperPath];
 
   try {
@@ -410,7 +403,8 @@ test('restoreFromCloudIfLocalEmpty prefers the better record doc when the same d
     const result = await restoreFromCloudIfLocalEmpty(stub.wx);
 
     assert.equal(result.restored, true);
-    assert.equal(result.snapshot.records['2026-04-08'].photo, 'cloud://env-id/ballet-mood/2026-04-08.jpg');
+    assert.equal(result.snapshot.records['2026-04-08'].note, '旧坏数据');
+    assert.equal(result.snapshot.records['2026-04-08'].photo, '');
   } finally {
     if (originalHelper) {
       require.cache[helperPath] = originalHelper;
@@ -479,7 +473,7 @@ test('pushSnapshotToCloud deep merges full history and keeps the newer updatedAt
   }
 });
 
-test('pushSnapshotToCloud keeps a non-empty local photo when a newer cloud record has an empty photo', async () => {
+test('pushSnapshotToCloud respects a newer cloud-side photo deletion', async () => {
   const originalHelper = require.cache[helperPath];
 
   try {
@@ -526,9 +520,10 @@ test('pushSnapshotToCloud keeps a non-empty local photo when a newer cloud recor
       courseTags: [{ name: '入门', selected: false }]
     }, stub.wx);
 
-    assert.equal(result.snapshot.records['2026-04-08'].photo.startsWith('cloud://'), true);
+    assert.equal(result.snapshot.records['2026-04-08'].photo, '');
+    assert.equal(stub.uploadCalls.length, 0);
     assert.equal(
-      stub.addedPayloads[RECORDS_COLLECTION].some((payload) => payload.dateKey === '2026-04-08' && payload.photo.startsWith('cloud://')),
+      stub.addedPayloads[RECORDS_COLLECTION].some((payload) => payload.dateKey === '2026-04-08' && payload.photo === ''),
       true
     );
   } finally {
@@ -600,9 +595,9 @@ test('pushSnapshotToCloud falls back to add when update payload exceeds expressi
     }, stub.wx);
 
     assert.equal(result.type, 'structured-sync');
-    assert.equal(result.snapshot.records['2026-04-08'].photo.startsWith('cloud://'), true);
+    assert.equal(result.snapshot.records['2026-04-08'].photo, '');
     assert.equal(
-      stub.addedPayloads[RECORDS_COLLECTION].some((payload) => payload.dateKey === '2026-04-08' && payload.photo.startsWith('cloud://')),
+      stub.addedPayloads[RECORDS_COLLECTION].some((payload) => payload.dateKey === '2026-04-08' && payload.photo === ''),
       true
     );
   } finally {
@@ -725,7 +720,7 @@ test('pushSnapshotToCloud removes structured cloud records that are missing from
   }
 });
 
-test('pushSnapshotToCloud writes delete tombstones for explicitly deleted dates so other devices cannot revive them', async () => {
+test('pushSnapshotToCloud permanently removes explicitly deleted dates', async () => {
   const originalHelper = require.cache[helperPath];
 
   try {
@@ -768,14 +763,88 @@ test('pushSnapshotToCloud writes delete tombstones for explicitly deleted dates 
     });
 
     assert.deepEqual(result.snapshot.records, {});
-    assert.equal(
-      stub.updatedPayloads[RECORDS_COLLECTION].some((payload) => (
-        payload.dateKey === '2026-04-02' &&
-        payload.isDeleted === true &&
-        payload.photo === ''
-      )),
-      true
-    );
+    assert.equal(stub.removedDocIds[RECORDS_COLLECTION].length, 1);
+    assert.equal(stub.updatedPayloads[RECORDS_COLLECTION], undefined);
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('saveSingleRecordToCloud updates one document and removes same-day duplicates', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const {
+      saveSingleRecordToCloud
+    } = require('../utils/cloud-sync-helper');
+
+    const stub = createWxStub({
+      recordsQueryResult: [{
+        _id: 'record-keep',
+        dateKey: '2026-04-08',
+        note: '旧内容'
+      }, {
+        _id: 'record-duplicate-1',
+        dateKey: '2026-04-08',
+        note: '重复内容一'
+      }, {
+        _id: 'record-duplicate-2',
+        dateKey: '2026-04-08',
+        note: '重复内容二'
+      }]
+    });
+
+    const result = await saveSingleRecordToCloud('2026-04-08', {
+      note: '最新内容',
+      photo: '',
+      terms: ['Adagio'],
+      bodyParts: [],
+      courses: [],
+      updatedAt: '2026-04-08T10:00:00.000Z'
+    }, stub.wx);
+
+    assert.equal(result.type, 'update');
+    assert.equal(result.duplicatesRemoved, 2);
+    assert.equal(stub.updatedPayloads[RECORDS_COLLECTION][0].note, '最新内容');
+    assert.equal(stub.removedDocIds[RECORDS_COLLECTION].length, 2);
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('deleteSingleRecordInCloud permanently removes every same-day document', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const {
+      deleteSingleRecordInCloud
+    } = require('../utils/cloud-sync-helper');
+
+    const stub = createWxStub({
+      recordsQueryResult: [{
+        _id: 'record-1',
+        dateKey: '2026-04-08'
+      }, {
+        _id: 'record-2',
+        dateKey: '2026-04-08'
+      }]
+    });
+
+    const result = await deleteSingleRecordInCloud('2026-04-08', stub.wx);
+
+    assert.deepEqual(result, { type: 'remove', count: 2 });
+    assert.equal(stub.removedDocIds[RECORDS_COLLECTION].length, 2);
+    assert.equal(stub.updatedPayloads[RECORDS_COLLECTION], undefined);
   } finally {
     if (originalHelper) {
       require.cache[helperPath] = originalHelper;

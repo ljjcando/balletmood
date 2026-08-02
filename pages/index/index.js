@@ -378,11 +378,11 @@ Page({
       await this.applySnapshotToPageAndRender(localSnapshot, 'local-startup');
 
       if (hasLocalRecords(wx)) {
-        // 优先：快速拉云端最新快照 apply 到页面，让用户几秒内看到跨设备最新数据
-        // 之前逻辑是先跑 migrateLocalSnapshotToCloud 全量同步再 apply，云端记录多时会卡 30-60 秒
+        // 手机本地数据优先：只有云端快照确实更新时才应用，
+        // 避免旧云端备份覆盖手机上的较新记录。
         this.startupSyncPromise = fetchLatestCloudSnapshot(wx)
           .then(async (cloudSnapshot) => {
-            if (cloudSnapshot) {
+            if (cloudSnapshot && this.shouldApplyCloudSnapshot(cloudSnapshot)) {
               await this.applyAsyncSnapshotIfCurrent(
                 cloudSnapshot,
                 initialMutationVersion,

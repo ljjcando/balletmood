@@ -12,3 +12,12 @@ test('course selector uses confirm wording and exposes a close button in the hea
   assert.match(template, /class="course-selector-close" bindtap="closeCourseSelector">×<\/text>/);
   assert.doesNotMatch(template, /class="course-selector-cancel"[\s\S]*?>取消<\/view>/);
 });
+
+test('postcard image is destroyed whenever the postcard modal is closed', () => {
+  const template = fs.readFileSync(wxmlPath, 'utf8');
+
+  assert.match(
+    template,
+    /class="postcard-image-wrapper"\s+wx:if="\{\{showPostcard && \(postcardData\.photo \|\| postcardData\.photoExpired\)\}\}"/
+  );
+});

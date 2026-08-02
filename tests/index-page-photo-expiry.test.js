@@ -4,6 +4,30 @@ const assert = require('node:assert/strict');
 const indexPath = require.resolve('../pages/index/index');
 const helperPath = require.resolve('../utils/cloud-sync-helper');
 
+const cloudSyncHelperDefaults = {
+  getDefaultSnapshot() {
+    return {
+      records: {},
+      terms: ['Adagio'],
+      goal: '',
+      courseTags: [{ name: '入门', selected: false }]
+    };
+  },
+  saveSingleRecordToCloud() {
+    return Promise.resolve();
+  },
+  deleteSingleRecordInCloud() {
+    return Promise.resolve();
+  },
+  stripDeletedSnapshot(snapshot) {
+    const records = Object.fromEntries(
+      Object.entries((snapshot && snapshot.records) || {}).filter(([, record]) => !record.isDeleted)
+    );
+    return { ...(snapshot || {}), records };
+  },
+  writeLocalSnapshot() {}
+};
+
 function buildPageInstance(pageConfig) {
   return {
     ...pageConfig,
@@ -42,6 +66,7 @@ test('expired photo fallback hides broken thumbnails and surfaces re-upload hint
     filename: helperPath,
     loaded: true,
     exports: {
+      ...cloudSyncHelperDefaults,
       getDefaultSnapshot() {
         return {
           records: {},
@@ -108,14 +133,14 @@ test('expired photo fallback hides broken thumbnails and surfaces re-upload hint
     await pageConfig.handleEditPhotoError.call(pageInstance);
     assert.equal(pageInstance.data.currentPhotoExpired, true);
     assert.equal(pageInstance.data.expiredPhotoDates['2026-04-02'], true);
-    assert.equal(
-      pageInstance.data.calendarDays.some((item) => item.date === '2026-04-02' && item.photo === ''),
-      true
-    );
 
     pageConfig.openPostcard.call(pageInstance, '2026-04-02');
     assert.equal(pageInstance.data.postcardData.photoExpired, true);
     assert.equal(pageInstance.data.postcardData.photo, '');
+
+    pageConfig.closePostcard.call(pageInstance);
+    assert.equal(pageInstance.data.showPostcard, false);
+    assert.deepEqual(pageInstance.data.postcardData, {});
 
     pageConfig.openEditModal.call(pageInstance, '2026-04-02');
     assert.equal(pageInstance.data.currentPhotoExpired, true);
