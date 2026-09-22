@@ -57,6 +57,9 @@ function createWxStub({
       getStorageSync(key) {
         return storage[key];
       },
+      getStorageInfoSync() {
+        return { keys: Object.keys(storage) };
+      },
       setStorageSync(key, value) {
         storage[key] = value;
       },
@@ -153,6 +156,33 @@ function createWxStub({
     }
   };
 }
+
+test('isDeviceInitialized recognizes legacy devices with an empty records storage key', () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const { isDeviceInitialized } = require('../utils/cloud-sync-helper');
+
+    const legacyDevice = createWxStub({
+      local: { balletMoodData: {} }
+    });
+    const newDevice = createWxStub({ local: {} });
+    const markedDevice = createWxStub({
+      local: { balletMoodDeviceInitialized: true }
+    });
+
+    assert.equal(isDeviceInitialized(legacyDevice.wx), true);
+    assert.equal(isDeviceInitialized(newDevice.wx), false);
+    assert.equal(isDeviceInitialized(markedDevice.wx), true);
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
 
 test('pushSnapshotToCloud keeps a cloud tombstone so stale local records cannot revive deleted entries', async () => {
   const originalHelper = require.cache[helperPath];
@@ -845,6 +875,98 @@ test('deleteSingleRecordInCloud permanently removes every same-day document', as
     assert.deepEqual(result, { type: 'remove', count: 2 });
     assert.equal(stub.removedDocIds[RECORDS_COLLECTION].length, 2);
     assert.equal(stub.updatedPayloads[RECORDS_COLLECTION], undefined);
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('pending cloud deletions survive failure and clear only after a successful retry', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const {
+      queueRecordDeletion,
+      flushPendingRecordDeletions
+    } = require('../utils/cloud-sync-helper');
+
+    const failedStub = createWxStub({
+      local: {},
+      recordsQueryResult: [{ _id: 'record-1', dateKey: '2026-04-08' }],
+      failRemoveWith: new Error('offline')
+    });
+    queueRecordDeletion('2026/04/08', failedStub.wx);
+
+    await assert.rejects(
+      flushPendingRecordDeletions(failedStub.wx),
+      /offline/
+    );
+    assert.deepEqual(
+      failedStub.storage.balletMoodPendingRecordDeletions,
+      ['2026-04-08']
+    );
+
+    const successStub = createWxStub({
+      local: {
+        balletMoodPendingRecordDeletions: ['2026-04-08']
+      },
+      recordsQueryResult: [{ _id: 'record-1', dateKey: '2026-04-08' }]
+    });
+    const result = await flushPendingRecordDeletions(successStub.wx);
+
+    assert.deepEqual(result, { completed: ['2026-04-08'], remaining: [] });
+    assert.deepEqual(successStub.storage.balletMoodPendingRecordDeletions, []);
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('backupSnapshotToCloud mirrors the local snapshot without importing cloud-only records', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const { backupSnapshotToCloud } = require('../utils/cloud-sync-helper');
+    const localRecord = {
+      note: '本地记录',
+      photo: '',
+      terms: [],
+      bodyParts: [],
+      courses: [],
+      updatedAt: '2026-04-08T10:00:00.000Z'
+    };
+    const stub = createWxStub({
+      local: {},
+      profileQueryResult: [{ _id: 'profile-doc' }],
+      recordsQueryResult: [{
+        _id: 'record-local',
+        dateKey: '2026-04-08',
+        ...localRecord
+      }, {
+        _id: 'record-cloud-only',
+        dateKey: '2026-04-09',
+        note: '不应导入本地'
+      }]
+    });
+
+    const result = await backupSnapshotToCloud({
+      records: { '2026-04-08': localRecord },
+      terms: ['Adagio'],
+      goal: '',
+      courseTags: [{ name: '入门', selected: false }]
+    }, stub.wx);
+
+    assert.deepEqual(Object.keys(result.snapshot.records), ['2026-04-08']);
+    assert.deepEqual(Object.keys(stub.storage.balletMoodData), ['2026-04-08']);
+    assert.equal(stub.removedDocIds[RECORDS_COLLECTION].length, 1);
   } finally {
     if (originalHelper) {
       require.cache[helperPath] = originalHelper;

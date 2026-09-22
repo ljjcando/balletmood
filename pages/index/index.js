@@ -9,12 +9,16 @@ const {
   getDefaultSnapshot,
   readLocalSnapshot,
   hasLocalRecords,
+  isDeviceInitialized,
+  markDeviceInitialized,
   migrateLocalSnapshotToCloud,
   restoreFromCloudIfLocalEmpty,
-  pushSnapshotToCloud,
+  backupSnapshotToCloud,
   saveSingleRecordToCloud,
   deleteSingleRecordInCloud,
-  fetchLatestCloudSnapshot,
+  queueRecordDeletion,
+  clearPendingRecordDeletion,
+  flushPendingRecordDeletions,
   stripDeletedSnapshot,
   writeLocalSnapshot
 } = require('../../utils/cloud-sync-helper');
@@ -260,7 +264,7 @@ Page({
     const previousSync = this.pendingCloudSyncPromise || Promise.resolve();
     const nextSync = previousSync
       .catch(() => {})
-      .then(() => pushSnapshotToCloud(snapshot, wx, options));
+      .then(() => backupSnapshotToCloud(snapshot, wx, options));
 
     this.pendingCloudSyncPromise = nextSync;
     return nextSync.catch(() => {});
@@ -296,6 +300,7 @@ Page({
       .catch(() => {})
       .then(async () => {
         await deleteSingleRecordInCloud(dateKey, wx);
+        clearPendingRecordDeletion(dateKey, wx);
       })
       .catch((error) => {
         console.log('[index] syncSingleRecordDeleteInBackground failed:', error && error.message);
@@ -305,59 +310,8 @@ Page({
     return nextSync.catch(() => {});
   },
 
-  getSnapshotFreshness(snapshot) {
-    const records = normalizePageRecords(snapshot && snapshot.records);
-    const latest = Object.values(records).reduce((currentLatest, record) => {
-      const timestamp = record && record.updatedAt ? new Date(record.updatedAt).getTime() : Number.NaN;
-      if (Number.isNaN(timestamp)) {
-        return currentLatest;
-      }
-
-      return Math.max(currentLatest, timestamp);
-    }, -Infinity);
-
-    const termsTimestamp = snapshot && snapshot.termsUpdatedAt
-      ? new Date(snapshot.termsUpdatedAt).getTime()
-      : Number.NaN;
-    const courseTagsTimestamp = snapshot && snapshot.courseTagsUpdatedAt
-      ? new Date(snapshot.courseTagsUpdatedAt).getTime()
-      : Number.NaN;
-    const goalTimestamp = snapshot && snapshot.goalUpdatedAt
-      ? new Date(snapshot.goalUpdatedAt).getTime()
-      : Number.NaN;
-    const freshness = [latest, termsTimestamp, courseTagsTimestamp, goalTimestamp].reduce((currentLatest, timestamp) => {
-      if (Number.isNaN(timestamp)) {
-        return currentLatest;
-      }
-
-      return Math.max(currentLatest, timestamp);
-    }, -Infinity);
-
-    return freshness === -Infinity ? Number.NaN : freshness;
-  },
-
   createMutationTimestamp() {
     return new Date().toISOString();
-  },
-
-  shouldApplyCloudSnapshot(cloudSnapshot) {
-    if (!cloudSnapshot) {
-      return false;
-    }
-
-    const currentSnapshot = this.buildCurrentSnapshot();
-    const currentFreshness = this.getSnapshotFreshness(currentSnapshot);
-    const cloudFreshness = this.getSnapshotFreshness(cloudSnapshot);
-
-    if (Number.isNaN(cloudFreshness)) {
-      return false;
-    }
-
-    if (Number.isNaN(currentFreshness)) {
-      return true;
-    }
-
-    return cloudFreshness > currentFreshness;
   },
 
   async applyAsyncSnapshotIfCurrent(snapshot, mutationVersion, source) {
@@ -377,28 +331,17 @@ Page({
     try {
       await this.applySnapshotToPageAndRender(localSnapshot, 'local-startup');
 
-      if (hasLocalRecords(wx)) {
-        // 手机本地数据优先：只有云端快照确实更新时才应用，
-        // 避免旧云端备份覆盖手机上的较新记录。
-        this.startupSyncPromise = fetchLatestCloudSnapshot(wx)
-          .then(async (cloudSnapshot) => {
-            if (cloudSnapshot && this.shouldApplyCloudSnapshot(cloudSnapshot)) {
-              await this.applyAsyncSnapshotIfCurrent(
-                cloudSnapshot,
-                initialMutationVersion,
-                'cloud-startup'
-              );
-            }
-          })
+      if (hasLocalRecords(wx) || isDeviceInitialized(wx)) {
+        markDeviceInitialized(wx);
+        // 当前设备以本地为准：先补做失败的云端删除，再把完整本地快照备份到云端。
+        // 不读取云端覆盖本地，因此不再承担多设备实时同步。
+        this.startupSyncPromise = flushPendingRecordDeletions(wx)
           .catch((error) => {
-            console.log('[index] startup cloud fetch failed after local render:', error && error.message);
+            console.log('[index] pending cloud delete retry failed:', error && error.message);
           })
-          .then(() => {
-            // 兜底：后台再跑 migrateLocalSnapshotToCloud，把可能未同步的本地更新推到云端
-            // 失败不影响页面显示（用户已经看到云端最新数据）
-            return migrateLocalSnapshotToCloud(wx).catch((error) => {
-              console.log('[index] background migrate after startup failed:', error && error.message);
-            });
+          .then(() => migrateLocalSnapshotToCloud(wx))
+          .catch((error) => {
+            console.log('[index] background local backup failed:', error && error.message);
           });
         return;
       }
@@ -410,6 +353,7 @@ Page({
             initialMutationVersion,
             restoreResult.restored ? 'cloud' : 'local-fallback'
           );
+          markDeviceInitialized(wx);
         })
         .catch((error) => {
           console.log('[index] startup restore failed after local render:', error && error.message);
@@ -418,48 +362,6 @@ Page({
       console.log('[index] loadStorageData failed, fallback to local snapshot:', error && error.message);
       await this.applySnapshotToPageAndRender(localSnapshot, 'local-error-fallback');
     }
-  },
-
-  async onRefresh() {
-    try {
-      await this.waitForPendingCloudSync();
-      const cloudSnapshot = await fetchLatestCloudSnapshot(wx);
-      if (cloudSnapshot) {
-        await this.applySnapshotToPageAndRender(cloudSnapshot, 'cloud-refresh');
-      } else {
-        await this.applySnapshotToPageAndRender(readLocalSnapshot(wx), 'refresh-local-fallback');
-      }
-    } catch (error) {
-      console.log('[index] onRefresh failed, fallback to local snapshot:', error && error.message);
-      await this.applySnapshotToPageAndRender(readLocalSnapshot(wx), 'refresh-error-fallback');
-    }
-  },
-
-  async onPullDownRefresh() {
-    await this.onRefresh();
-    wx.stopPullDownRefresh();
-    wx.showToast({ title: '已刷新', icon: 'success' });
-  },
-
-  onShow() {
-    const mutationVersion = this.localMutationVersion || 0;
-
-    this.backgroundRefreshPromise = (async () => {
-      try {
-        if (this.pendingCloudSyncPromise) {
-          await this.waitForPendingCloudSync();
-        }
-        const cloudSnapshot = await fetchLatestCloudSnapshot(wx);
-
-        if (!this.shouldApplyCloudSnapshot(cloudSnapshot)) {
-          return;
-        }
-
-        await this.applyAsyncSnapshotIfCurrent(cloudSnapshot, mutationVersion, 'cloud-onshow');
-      } catch (error) {
-        console.log('[index] onShow background refresh failed:', error && error.message);
-      }
-    })();
   },
 
   // ==================== 月份导航 ====================
@@ -1094,6 +996,8 @@ Page({
 
       const allRecords = { ...this.data.allRecords };
       allRecords[selectedDate] = record;
+      // 如果用户在云端删除重试完成前重新创建同一天记录，新记录优先，取消旧删除任务。
+      clearPendingRecordDeletion(selectedDate, wx);
       this.trackLocalMutation();
 
       await this.setDataAsync({
@@ -1110,8 +1014,8 @@ Page({
         icon: 'success'
       });
 
-      // 云端同步走精准单条更新（轻量路径）：只 update 这一条 dateKey 的云端文档，
-      // 不再拉全量、不再重写其他记录；耗时约 1-2 秒，跨设备几乎能立即看到新记录
+      // 云端备份走精准单条更新（轻量路径）：只 update 这一条 dateKey 的云端文档，
+      // 不再拉全量、不再重写其他记录。
       this.syncSingleRecordInBackground(selectedDate, record);
     } catch (error) {
       wx.showModal({
@@ -1130,6 +1034,7 @@ Page({
         if (res.confirm) {
           const selectedDate = this.data.selectedDate;
           const allRecords = { ...this.data.allRecords };
+          queueRecordDeletion(selectedDate, wx);
           delete allRecords[selectedDate];
           this.trackLocalMutation();
 
@@ -1227,6 +1132,7 @@ Page({
         if (res.confirm) {
           const selectedDate = this.data.selectedDate;
           const allRecords = { ...this.data.allRecords };
+          queueRecordDeletion(selectedDate, wx);
           delete allRecords[selectedDate];
           this.trackLocalMutation();
 

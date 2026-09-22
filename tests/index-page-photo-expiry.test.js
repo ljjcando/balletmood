@@ -19,6 +19,18 @@ const cloudSyncHelperDefaults = {
   deleteSingleRecordInCloud() {
     return Promise.resolve();
   },
+  isDeviceInitialized() {
+    return false;
+  },
+  markDeviceInitialized() {},
+  backupSnapshotToCloud(snapshot) {
+    return Promise.resolve({ snapshot });
+  },
+  queueRecordDeletion() {},
+  clearPendingRecordDeletion() {},
+  flushPendingRecordDeletions() {
+    return Promise.resolve({ completed: [], remaining: [] });
+  },
   stripDeletedSnapshot(snapshot) {
     const records = Object.fromEntries(
       Object.entries((snapshot && snapshot.records) || {}).filter(([, record]) => !record.isDeleted)

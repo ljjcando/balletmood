@@ -4,7 +4,7 @@
   "navigationBarTextStyle": "black",
   "backgroundColor": "#F5F0E8",
   "backgroundTextStyle": "light",
-  "enablePullDownRefresh": true,
+  "enablePullDownRefresh": false,
   "enableShareAppMessage": true,
   "enableShareTimeline": true,
   "disableScroll": false

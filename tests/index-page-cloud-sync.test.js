@@ -22,6 +22,10 @@ const cloudSyncHelperDefaults = {
   hasLocalRecords() {
     return false;
   },
+  isDeviceInitialized() {
+    return false;
+  },
+  markDeviceInitialized() {},
   migrateLocalSnapshotToCloud() {
     return Promise.resolve({ migrated: false, snapshot: getDefaultSnapshot() });
   },
@@ -31,11 +35,19 @@ const cloudSyncHelperDefaults = {
   pushSnapshotToCloud(snapshot) {
     return Promise.resolve({ snapshot });
   },
+  backupSnapshotToCloud(snapshot) {
+    return Promise.resolve({ snapshot });
+  },
   saveSingleRecordToCloud(dateKey, record) {
     return Promise.resolve({ type: 'update', dateKey, record });
   },
   deleteSingleRecordInCloud() {
     return Promise.resolve({ type: 'remove', count: 1 });
+  },
+  queueRecordDeletion() {},
+  clearPendingRecordDeletion() {},
+  flushPendingRecordDeletions() {
+    return Promise.resolve({ completed: [], remaining: [] });
   },
   fetchLatestCloudSnapshot() {
     return Promise.resolve(null);
@@ -298,7 +310,7 @@ test('onLoad keeps a newer local snapshot when the cloud backup is older', async
   }
 });
 
-test('onLoad renders stale local cache first and then applies a newer cloud tombstone snapshot', async () => {
+test('onLoad keeps local records authoritative and does not apply a newer cloud tombstone', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
   const originalHelper = require.cache[helperPath];
@@ -393,8 +405,10 @@ test('onLoad renders stale local cache first and then applies a newer cloud tomb
     await onLoadPromise;
     await pageInstance.startupSyncPromise;
 
-    assert.deepEqual(pageInstance.data.allRecords, {});
-    assert.equal(pageInstance.data.monthlyGoal, '云端目标');
+    assert.deepEqual(pageInstance.data.allRecords, {
+      '2026-04-08': { note: '电脑端旧缓存', updatedAt: '2026-04-08T08:00:00.000Z', courses: [] }
+    });
+    assert.equal(pageInstance.data.monthlyGoal, '旧目标');
     assert.equal(migrateCalls, 1);
     assert.equal(restoreCalls, 0);
   } finally {
@@ -409,7 +423,7 @@ test('onLoad renders stale local cache first and then applies a newer cloud tomb
   }
 });
 
-test('onLoad applies migrated cloud photo ids returned from startup sync', async () => {
+test('onLoad does not replace the visible local photo during background backup', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
   const originalHelper = require.cache[helperPath];
@@ -510,7 +524,7 @@ test('onLoad applies migrated cloud photo ids returned from startup sync', async
 
     assert.equal(
       pageInstance.data.allRecords['2026-04-01'].photo,
-      'cloud://env-id/ballet-mood/2026-04-01-1.jpg'
+      '/tmp/local-photo.jpg'
     );
   } finally {
     global.Page = originalPage;
@@ -611,6 +625,90 @@ test('onLoad restores cloud data when local records are empty', async () => {
   }
 });
 
+test('onLoad does not restore cloud records on an initialized device with an empty local history', async () => {
+  const originalPage = global.Page;
+  const originalWx = global.wx;
+  const originalHelper = require.cache[helperPath];
+
+  let pageConfig;
+  let restoreCalls = 0;
+  let backupCalls = 0;
+
+  require.cache[helperPath] = {
+    id: helperPath,
+    filename: helperPath,
+    loaded: true,
+    exports: {
+      ...cloudSyncHelperDefaults,
+      readLocalSnapshot() {
+        return {
+          records: {},
+          terms: ['Adagio'],
+          goal: '',
+          courseTags: []
+        };
+      },
+      hasLocalRecords() {
+        return false;
+      },
+      isDeviceInitialized() {
+        return true;
+      },
+      restoreFromCloudIfLocalEmpty() {
+        restoreCalls += 1;
+        return Promise.resolve({
+          restored: true,
+          snapshot: {
+            records: {
+              '2026-04-02': { note: '不应复活的云端旧记录', courses: [] }
+            }
+          }
+        });
+      },
+      migrateLocalSnapshotToCloud() {
+        backupCalls += 1;
+        return Promise.resolve({ migrated: true });
+      }
+    }
+  };
+
+  try {
+    global.Page = (config) => {
+      pageConfig = config;
+    };
+    global.wx = {
+      showToast() {},
+      showLoading() {},
+      hideLoading() {},
+      showModal() {},
+      setStorageSync() {},
+      getStorageSync() {
+        return '';
+      }
+    };
+
+    delete require.cache[indexPath];
+    require('../pages/index/index');
+
+    const pageInstance = buildPageInstance(pageConfig);
+    await pageConfig.onLoad.call(pageInstance);
+    await pageInstance.startupSyncPromise;
+
+    assert.deepEqual(pageInstance.data.allRecords, {});
+    assert.equal(restoreCalls, 0);
+    assert.equal(backupCalls, 1);
+  } finally {
+    global.Page = originalPage;
+    global.wx = originalWx;
+    delete require.cache[indexPath];
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
 test('saveRecord persists locally first and sends the saved day to precise cloud backup', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
@@ -619,6 +717,7 @@ test('saveRecord persists locally first and sends the saved day to precise cloud
   let pageConfig;
   const savedRecords = [];
   const storageWrites = [];
+  const clearedDeletionDates = [];
 
   require.cache[helperPath] = {
     id: helperPath,
@@ -646,6 +745,9 @@ test('saveRecord persists locally first and sends the saved day to precise cloud
       saveSingleRecordToCloud(dateKey, record) {
         savedRecords.push({ dateKey, record });
         return Promise.resolve({ type: 'update', dateKey, record });
+      },
+      clearPendingRecordDeletion(dateKey) {
+        clearedDeletionDates.push(dateKey);
       }
     }
   };
@@ -691,6 +793,7 @@ test('saveRecord persists locally first and sends the saved day to precise cloud
     assert.equal(storageWrites.some(({ key }) => key === 'balletMoodData'), true);
     assert.equal(savedRecords.length, 1);
     assert.equal(savedRecords[0].dateKey, '2026-04-03');
+    assert.deepEqual(clearedDeletionDates, ['2026-04-03']);
     assert.deepEqual(savedRecords[0].record.terms, ['Adagio']);
     assert.deepEqual(pageInstance.data.records, {
       '2026-04-03': pageInstance.data.allRecords['2026-04-03']
@@ -714,6 +817,7 @@ test('deleteFromPostcard removes the local record and sends a precise cloud dele
 
   let pageConfig;
   const deletedDateKeys = [];
+  const queuedDeletionDates = [];
   const storageWrites = [];
 
   require.cache[helperPath] = {
@@ -757,6 +861,9 @@ test('deleteFromPostcard removes the local record and sends a precise cloud dele
       deleteSingleRecordInCloud(dateKey) {
         deletedDateKeys.push(dateKey);
         return Promise.resolve({ type: 'remove', count: 1 });
+      },
+      queueRecordDeletion(dateKey) {
+        queuedDeletionDates.push(dateKey);
       },
       fetchLatestCloudSnapshot() {
         return Promise.resolve(null);
@@ -802,6 +909,7 @@ test('deleteFromPostcard removes the local record and sends a precise cloud dele
       false
     );
     assert.equal(storageWrites.some(({ key, value }) => key === 'balletMoodData' && !value['2026-04-02']), true);
+    assert.deepEqual(queuedDeletionDates, ['2026-04-02']);
     assert.deepEqual(deletedDateKeys, ['2026-04-02']);
   } finally {
     global.Page = originalPage;
@@ -815,7 +923,7 @@ test('deleteFromPostcard removes the local record and sends a precise cloud dele
   }
 });
 
-test('onRefresh waits for a pending precise delete before reading cloud data again', async () => {
+test('pull-to-refresh cloud import is removed while a precise delete is pending', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
   const originalHelper = require.cache[helperPath];
@@ -919,16 +1027,17 @@ test('onRefresh waits for a pending precise delete before reading cloud data aga
     pageInstance.data.showPostcard = true;
     pageConfig.deleteFromPostcard.call(pageInstance);
 
-    const refreshPromise = pageConfig.onRefresh.call(pageInstance);
     await flushMicrotasks();
 
     assert.equal(fetchCalls, 0);
+    assert.equal(pageConfig.onRefresh, undefined);
+    assert.equal(pageConfig.onPullDownRefresh, undefined);
 
     resolveDelete();
-    await refreshPromise;
+    await pageInstance.waitForPendingCloudSync();
 
     assert.deepEqual(Object.keys(pageInstance.data.allRecords), ['2026-04-01']);
-    assert.equal(fetchCalls, 1);
+    assert.equal(fetchCalls, 0);
   } finally {
     global.Page = originalPage;
     global.wx = originalWx;
@@ -941,7 +1050,7 @@ test('onRefresh waits for a pending precise delete before reading cloud data aga
   }
 });
 
-test('onShow keeps the current page interactive and only applies a newer cloud snapshot in the background', async () => {
+test('onShow cloud import is removed so cloud changes cannot overwrite local records', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
   const originalHelper = require.cache[helperPath];
@@ -1023,23 +1132,10 @@ test('onShow keeps the current page interactive and only applies a newer cloud s
     await pageConfig.onLoad.call(pageInstance);
     await pageInstance.startupSyncPromise;
 
-    pageConfig.onShow.call(pageInstance);
-    assert.equal(fetchCalls, 2);
+    assert.equal(pageConfig.onShow, undefined);
+    assert.equal(fetchCalls, 0);
     assert.equal(pageInstance.data.allRecords['2026-04-08'].note, '本地旧记录');
-
-    resolveCloudFetch({
-      records: {
-        '2026-04-08': { note: '云端新记录', updatedAt: '2026-04-09T09:00:00.000Z', courses: [] }
-      },
-      terms: ['Adagio'],
-      goal: '云端目标',
-      courseTags: [{ name: '入门', selected: false }]
-    });
-
-    await flushMicrotasks();
-
-    assert.equal(pageInstance.data.allRecords['2026-04-08'].note, '云端新记录');
-    assert.equal(pageInstance.data.monthlyGoal, '云端目标');
+    assert.equal(pageInstance.data.monthlyGoal, '本地目标');
   } finally {
     global.Page = originalPage;
     global.wx = originalWx;
@@ -1052,7 +1148,7 @@ test('onShow keeps the current page interactive and only applies a newer cloud s
   }
 });
 
-test('onShow ignores older cloud snapshots and keeps newer local cache intact', async () => {
+test('onShow is absent and never fetches an older cloud snapshot', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
   const originalHelper = require.cache[helperPath];
@@ -1136,8 +1232,8 @@ test('onShow ignores older cloud snapshots and keeps newer local cache intact', 
     await pageConfig.onLoad.call(pageInstance);
     await pageInstance.startupSyncPromise;
 
-    pageConfig.onShow.call(pageInstance);
-    await flushMicrotasks();
+    assert.equal(pageConfig.onShow, undefined);
+    assert.equal(fetchCalls, 0);
 
     assert.equal(pageInstance.data.allRecords['2026-04-08'].note, '本地新记录');
     assert.equal(pageInstance.data.monthlyGoal, '本地目标');

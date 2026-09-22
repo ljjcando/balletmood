@@ -11,7 +11,9 @@ const STORAGE_KEYS = {
   goal: 'balletMoodGoal',
   goalUpdatedAt: 'balletMoodGoalUpdatedAt',
   courseTags: 'balletMoodCourseTags',
-  courseTagsUpdatedAt: 'balletMoodCourseTagsUpdatedAt'
+  courseTagsUpdatedAt: 'balletMoodCourseTagsUpdatedAt',
+  deviceInitialized: 'balletMoodDeviceInitialized',
+  pendingRecordDeletions: 'balletMoodPendingRecordDeletions'
 };
 
 const DEFAULT_TERMS = ['Rond de jambe', 'Adagio', 'jete', 'fondu', 'passe'];
@@ -371,6 +373,64 @@ function writeLocalSnapshot(snapshot, wxApi = wx) {
 function hasLocalRecords(wxApi = wx) {
   const snapshot = readLocalSnapshot(wxApi);
   return Object.keys(snapshot.records).length > 0;
+}
+
+function isDeviceInitialized(wxApi = wx) {
+  if (wxApi.getStorageSync(STORAGE_KEYS.deviceInitialized) === true) {
+    return true;
+  }
+
+  // v1.0.8 之前没有 deviceInitialized 标记。旧设备即使已经删光记录，
+  // 仍会保留一个空的 balletMoodData 存储键；用它区分旧设备与真正的新设备，
+  // 避免升级后把云端尚未删净的旧记录重新恢复回来。
+  if (typeof wxApi.getStorageInfoSync === 'function') {
+    const storageInfo = wxApi.getStorageInfoSync();
+    return !!(
+      storageInfo &&
+      Array.isArray(storageInfo.keys) &&
+      storageInfo.keys.includes(STORAGE_KEYS.records)
+    );
+  }
+
+  return false;
+}
+
+function markDeviceInitialized(wxApi = wx) {
+  wxApi.setStorageSync(STORAGE_KEYS.deviceInitialized, true);
+}
+
+function getPendingRecordDeletions(wxApi = wx) {
+  const stored = wxApi.getStorageSync(STORAGE_KEYS.pendingRecordDeletions);
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+
+  return stored
+    .map(normalizeRecordDateKey)
+    .filter((dateKey, index, all) => dateKey && all.indexOf(dateKey) === index);
+}
+
+function queueRecordDeletion(dateKey, wxApi = wx) {
+  const normalizedDateKey = normalizeRecordDateKey(dateKey);
+  if (!normalizedDateKey) {
+    return getPendingRecordDeletions(wxApi);
+  }
+
+  const pending = getPendingRecordDeletions(wxApi);
+  if (!pending.includes(normalizedDateKey)) {
+    pending.push(normalizedDateKey);
+    wxApi.setStorageSync(STORAGE_KEYS.pendingRecordDeletions, pending);
+  }
+
+  return pending;
+}
+
+function clearPendingRecordDeletion(dateKey, wxApi = wx) {
+  const normalizedDateKey = normalizeRecordDateKey(dateKey);
+  const pending = getPendingRecordDeletions(wxApi)
+    .filter((item) => item !== normalizedDateKey);
+  wxApi.setStorageSync(STORAGE_KEYS.pendingRecordDeletions, pending);
+  return pending;
 }
 
 function hasNonEmptyRecords(doc) {
@@ -768,6 +828,19 @@ async function deleteSingleRecordInCloud(dateKey, wxApi = wx) {
   return { type: 'remove', count: removed };
 }
 
+async function flushPendingRecordDeletions(wxApi = wx) {
+  const pending = getPendingRecordDeletions(wxApi);
+  const completed = [];
+
+  for (const dateKey of pending) {
+    await deleteSingleRecordInCloud(dateKey, wxApi);
+    clearPendingRecordDeletion(dateKey, wxApi);
+    completed.push(dateKey);
+  }
+
+  return { completed, remaining: getPendingRecordDeletions(wxApi) };
+}
+
 async function migrateLegacySnapshotToStructuredCloud(wxApi = wx) {
   const legacyDoc = await getCurrentUserDoc(wxApi);
   if (!legacyDoc || !legacyDoc.records || Object.keys(legacyDoc.records).length === 0) {
@@ -818,6 +891,20 @@ async function pushSnapshotToCloud(snapshot, wxApi = wx, options = {}) {
   };
 }
 
+async function backupSnapshotToCloud(snapshot, wxApi = wx) {
+  const localSnapshot = normalizeSnapshot(snapshot);
+  const hydratedSnapshot = await hydrateSnapshotPhotos(localSnapshot, wxApi);
+
+  await saveProfileSnapshot(hydratedSnapshot, wxApi);
+  await saveRecordSnapshot(hydratedSnapshot, wxApi, { replaceRecords: true });
+  writeLocalSnapshot(hydratedSnapshot, wxApi);
+
+  return {
+    type: 'local-authoritative-backup',
+    snapshot: hydratedSnapshot
+  };
+}
+
 async function backupLocalToCloudIfNeeded(wxApi = wx) {
   if (!hasLocalRecords(wxApi)) {
     return {
@@ -856,20 +943,11 @@ async function backupLocalToCloudIfNeeded(wxApi = wx) {
 
 async function migrateLocalSnapshotToCloud(wxApi = wx) {
   const localSnapshot = readLocalSnapshot(wxApi);
-
-  if (Object.keys(localSnapshot.records).length === 0) {
-    return {
-      migrated: false,
-      reason: 'local-empty',
-      snapshot: localSnapshot
-    };
-  }
-
-  const result = await pushSnapshotToCloud(localSnapshot, wxApi);
+  const result = await backupSnapshotToCloud(localSnapshot, wxApi);
 
   return {
     migrated: true,
-    reason: 'full-sync-complete',
+    reason: 'local-backup-complete',
     snapshot: result.snapshot,
     ...result
   };
@@ -938,8 +1016,15 @@ module.exports = {
   readLocalSnapshot,
   writeLocalSnapshot,
   hasLocalRecords,
+  isDeviceInitialized,
+  markDeviceInitialized,
+  getPendingRecordDeletions,
+  queueRecordDeletion,
+  clearPendingRecordDeletion,
+  flushPendingRecordDeletions,
   getCurrentUserDoc,
   pushSnapshotToCloud,
+  backupSnapshotToCloud,
   saveSingleRecordToCloud,
   deleteSingleRecordInCloud,
   backupLocalToCloudIfNeeded,
