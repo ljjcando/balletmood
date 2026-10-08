@@ -1,162 +1,420 @@
-/* 舞者成就统计页样式 */
-.stats-container {
-  min-height: 100vh;
+/* Ballet Mood 月度统计页：延续主页的莫兰迪燕麦色系 */
+page {
   background: #F5F0E8;
-  padding: 30rpx;
+  font-family: -apple-system-font, "Georgia", "Times New Roman", "Songti SC", serif;
+}
+
+.custom-nav {
+  position: fixed;
+  z-index: 10;
+  top: 0;
+  right: 0;
+  left: 0;
+  box-sizing: border-box;
+  background: rgba(245, 240, 232, 0.96);
+}
+
+.custom-nav-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   box-sizing: border-box;
 }
 
-/* ==================== 顶部统计卡片 ==================== */
-.summary-cards {
-  display: flex;
-  gap: 20rpx;
-  margin-bottom: 40rpx;
-}
-
-.summary-card {
-  flex: 1;
-  background: #FAF7F2;
-  border-radius: 20rpx;
-  padding: 30rpx 20rpx;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  box-shadow: 0 8rpx 24rpx rgba(0, 0, 0, 0.06);
-}
-
-.summary-card.main {
-  background: #D2B48C;
-}
-
-.summary-card.main .summary-value {
-  color: #FAF7F2;
-}
-
-.summary-card.main .summary-label {
-  color: rgba(250, 247, 242, 0.9);
-}
-
-.summary-value {
-  font-size: 48rpx;
-  font-weight: 300;
-  color: #D2B48C;
-  margin-bottom: 10rpx;
+.custom-nav-title {
+  color: #22201E;
+  font-family: -apple-system-font, "PingFang SC", sans-serif;
+  font-size: 38rpx;
+  font-weight: 600;
   line-height: 1;
+  letter-spacing: 3rpx;
 }
 
-.summary-label {
-  font-size: 24rpx;
+.custom-nav-placeholder {
+  background: #F5F0E8;
+}
+
+.stats-container {
+  min-height: 100vh;
+  padding: 48rpx 28rpx 80rpx;
+  box-sizing: border-box;
+  background: #F5F0E8;
+  color: #4A4A4A;
+}
+
+.period-switch {
+  width: 280rpx;
+  height: 64rpx;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 auto 44rpx;
+  padding: 6rpx;
+  box-sizing: border-box;
+  border-radius: 36rpx;
+  background: rgba(232, 221, 212, 0.78);
+}
+
+.period-option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 30rpx;
   color: #8B8680;
+  font-size: 23rpx;
+}
+
+.period-option.active {
+  color: #4A4A4A;
+  background: #FAF7F2;
+  box-shadow: 0 6rpx 18rpx rgba(137, 112, 89, 0.08);
+  font-weight: 600;
+}
+
+.month-nav {
+  display: grid;
+  grid-template-columns: 80rpx 1fr 80rpx;
+  align-items: center;
+  margin-bottom: 8rpx;
+}
+
+.month-nav.current { margin-bottom: 52rpx; }
+
+.month-title {
+  font-size: 34rpx;
+  font-weight: 500;
+  letter-spacing: 3rpx;
+}
+
+.month-picker {
+  min-width: 0;
+}
+
+.month-title-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 68rpx;
+}
+
+.month-disclosure {
+  margin-left: 10rpx;
+  color: #A89888;
+  font-size: 25rpx;
+  line-height: 1;
+  transform: translateY(-2rpx);
+}
+
+.month-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 68rpx;
+  height: 68rpx;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #8B8680;
+  background: transparent;
+  font-size: 44rpx;
+  line-height: 64rpx;
+}
+
+.month-button.disabled { opacity: 0.25; }
+
+.return-current {
+  margin: 0 auto 26rpx;
+  padding: 8rpx 18rpx;
+  color: #A89888;
+  font-size: 20rpx;
+  letter-spacing: 1rpx;
   text-align: center;
 }
 
-/* ==================== 通用区块样式 ==================== */
-.section {
-  margin-bottom: 50rpx;
+.monthly-hero {
+  position: relative;
+  min-height: 290rpx;
+  padding: 46rpx 42rpx 38rpx;
+  overflow: hidden;
+  box-sizing: border-box;
+  border-radius: 16rpx 60rpx 16rpx 60rpx;
+  background: #FAF7F2;
+  box-shadow: 0 18rpx 50rpx rgba(137, 112, 89, 0.08);
+}
+
+.monthly-hero::before {
+  content: '';
+  position: absolute;
+  top: -110rpx;
+  right: -110rpx;
+  width: 250rpx;
+  height: 250rpx;
+  border: 2rpx solid rgba(201, 184, 168, 0.35);
+  border-radius: 50%;
+  box-shadow: 0 0 0 38rpx rgba(201, 184, 168, 0.06), 0 0 0 78rpx rgba(201, 184, 168, 0.035);
+}
+
+.annual-hero {
+  border-radius: 60rpx 16rpx 60rpx 16rpx;
+}
+
+.annual-hero::before {
+  top: auto;
+  right: -70rpx;
+  bottom: -100rpx;
+  border-color: rgba(169, 175, 160, 0.38);
+  box-shadow: 0 0 0 38rpx rgba(169, 175, 160, 0.05), 0 0 0 78rpx rgba(169, 175, 160, 0.03);
+}
+
+.hero-eyebrow {
+  display: block;
+  color: #8B8680;
+  font-size: 19rpx;
+  letter-spacing: 7rpx;
+}
+
+.hero-hours-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16rpx;
+  margin-top: 18rpx;
+}
+
+.hero-hours {
+  color: #A89888;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 112rpx;
+  font-weight: 400;
+  line-height: 0.9;
+  letter-spacing: -6rpx;
+}
+
+.hero-unit {
+  padding-bottom: 13rpx;
+  color: #8B8680;
+  font-size: 22rpx;
+}
+
+.hero-meta {
+  display: flex;
+  gap: 40rpx;
+  margin-top: 40rpx;
+  color: #8B8680;
+  font-size: 22rpx;
+}
+
+.hero-meta-number {
+  margin-right: 6rpx;
+  color: #4A4A4A;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 54rpx 4rpx 22rpx;
 }
 
 .section-title {
-  font-size: 28rpx;
-  color: #4A4A4A;
+  font-size: 30rpx;
   font-weight: 600;
-  margin-bottom: 25rpx;
-  padding-left: 10rpx;
+  letter-spacing: 2rpx;
 }
 
-/* ==================== 能量场预留位 ==================== */
-.energy-placeholder {
-  background: #FAF7F2;
-  border-radius: 20rpx;
-  padding: 40rpx;
-  min-height: 300rpx;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 20rpx;
-  align-items: center;
-  justify-content: center;
+.section-note {
+  color: #8B8680;
+  font-size: 20rpx;
 }
 
-.energy-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+.course-panel,
+.practice-calendar {
+  padding: 34rpx 30rpx;
+  border-radius: 28rpx;
+  background: rgba(250, 247, 242, 0.88);
 }
 
-.energy-bubble {
-  width: 120rpx;
-  height: 120rpx;
-  border-radius: 50%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 8rpx 20rpx rgba(0, 0, 0, 0.1);
-}
-
-.bubble-name {
-  font-size: 24rpx;
-  color: #4A4A4A;
-  margin-bottom: 5rpx;
-}
-
-.bubble-count {
-  font-size: 32rpx;
-  color: #4A4A4A;
-  font-weight: 600;
-}
-
-/* ==================== 课程统计 ==================== */
-.course-stats {
-  background: #FAF7F2;
-  border-radius: 20rpx;
-  padding: 30rpx;
-}
-
-.course-stat-item {
-  margin-bottom: 25rpx;
-}
-
-.course-stat-item:last-child {
-  margin-bottom: 0;
-}
+.course-stat-item { margin-bottom: 30rpx; }
+.course-stat-item:last-child { margin-bottom: 0; }
 
 .course-stat-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10rpx;
+  margin-bottom: 13rpx;
+  font-size: 22rpx;
 }
 
-.course-stat-name {
-  font-size: 26rpx;
-  color: #4A4A4A;
-  font-weight: 500;
-}
+.course-stat-name { color: #4A4A4A; font-weight: 500; }
+.course-stat-hours { color: #8B8680; }
 
-.course-stat-hours {
-  font-size: 24rpx;
-  color: #8B8680;
-}
-
-.course-stat-bar-wrapper {
-  width: 100%;
-  height: 12rpx;
-  background: #E8DDD4;
-  border-radius: 6rpx;
+.course-stat-track {
+  height: 10rpx;
   overflow: hidden;
+  border-radius: 10rpx;
+  background: #E8DDD4;
 }
 
 .course-stat-bar {
   height: 100%;
-  border-radius: 6rpx;
+  border-radius: 10rpx;
   transition: width 0.3s;
 }
 
-/* ==================== 空状态提示 ==================== */
-.empty-hint {
-  width: 100%;
+.empty-state {
+  padding: 54rpx 0;
   text-align: center;
-  font-size: 26rpx;
   color: #C9B8A8;
-  padding: 60rpx 0;
+  font-size: 23rpx;
+}
+
+.practice-calendar { padding-bottom: 26rpx; }
+
+.calendar-week,
+.calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+}
+
+.calendar-week {
+  margin-bottom: 16rpx;
+  color: #8B8680;
+  font-size: 19rpx;
+}
+
+.calendar-days { gap: 10rpx 8rpx; }
+
+.calendar-day {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16rpx;
+  color: #4A4A4A;
+  background: rgba(232, 221, 212, 0.25);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 21rpx;
+}
+
+.calendar-day.outside { color: rgba(139, 134, 128, 0.24); background: transparent; }
+.calendar-day.short { background: #E8DDD4; }
+.calendar-day.medium { color: #FAF7F2; background: #C9B8A8; }
+.calendar-day.long { color: #FAF7F2; background: #A89888; }
+
+.calendar-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18rpx;
+  margin-top: 24rpx;
+  padding: 22rpx 4rpx 0;
+  border-top: 1rpx solid rgba(139, 134, 128, 0.16);
+  color: #8B8680;
+  font-size: 19rpx;
+}
+
+.calendar-summary-number {
+  margin-right: 5rpx;
+  color: #4A4A4A;
+  font-size: 22rpx;
+  font-weight: 600;
+}
+
+.intensity-legend {
+  display: flex;
+  align-items: center;
+  gap: 7rpx;
+  white-space: nowrap;
+}
+
+.legend-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 4rpx;
+}
+
+.legend-short { background: #E8DDD4; }
+.legend-medium { background: #C9B8A8; }
+.legend-long { background: #A89888; }
+
+.empty-calendar-footer { justify-content: center; }
+
+.annual-trend-panel {
+  padding: 38rpx 24rpx 28rpx;
+  border-radius: 28rpx;
+  background: rgba(250, 247, 242, 0.88);
+}
+
+.annual-bars {
+  height: 264rpx;
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  align-items: end;
+  gap: 8rpx;
+}
+
+.annual-bar {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 1fr 30rpx;
+  align-items: end;
+  text-align: center;
+}
+
+.annual-bar-track {
+  width: 100%;
+  height: 220rpx;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  border-radius: 12rpx 12rpx 5rpx 5rpx;
+  background: rgba(232, 221, 212, 0.32);
+}
+
+.annual-bar-fill {
+  width: 100%;
+  min-height: 0;
+  border-radius: inherit;
+  background: rgba(201, 184, 168, 0.72);
+}
+
+.annual-bar.best .annual-bar-fill { background: #A89888; }
+
+.annual-bar > text {
+  color: #8B8680;
+  font-size: 16rpx;
+  line-height: 1;
+}
+
+.annual-insights {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16rpx;
+  margin-top: 26rpx;
+}
+
+.annual-insight {
+  padding: 24rpx 22rpx;
+  border-radius: 22rpx;
+  background: rgba(232, 221, 212, 0.34);
+  color: #8B8680;
+  font-size: 19rpx;
+  line-height: 1.6;
+}
+
+.annual-insight-value {
+  display: block;
+  color: #4A4A4A;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.history-total {
+  margin-top: 48rpx;
+  text-align: center;
+  color: #8B8680;
+  font-size: 21rpx;
+  letter-spacing: 1rpx;
 }

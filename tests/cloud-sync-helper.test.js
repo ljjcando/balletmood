@@ -15,7 +15,9 @@ function createWxStub({
   recordsQueryResult = [],
   failRemoveWith = null,
   failUpdateWith = null,
-  failUpdateCollection = null
+  failUpdateCollection = null,
+  failDeleteFileWith = null,
+  deleteFileResult = null
 } = {}) {
   const storage = { ...local };
   let whereCalls = 0;
@@ -26,6 +28,7 @@ function createWxStub({
   const addedPayloads = {};
   const removedDocIds = {};
   const uploadCalls = [];
+  const deleteFileCalls = [];
 
   return {
     storage,
@@ -53,6 +56,9 @@ function createWxStub({
     get uploadCalls() {
       return uploadCalls;
     },
+    get deleteFileCalls() {
+      return deleteFileCalls;
+    },
     wx: {
       getStorageSync(key) {
         return storage[key];
@@ -68,6 +74,15 @@ function createWxStub({
           uploadCalls.push(options);
           return {
             fileID: `cloud://env-id/${options.cloudPath}`
+          };
+        },
+        async deleteFile(options) {
+          deleteFileCalls.push(options);
+          if (failDeleteFileWith) {
+            throw failDeleteFileWith;
+          }
+          return deleteFileResult || {
+            fileList: options.fileList.map((fileID) => ({ fileID, status: 0 }))
           };
         },
         database() {
@@ -294,7 +309,7 @@ test('fetchLatestCloudSnapshot keeps legacy tombstones so freshness checks can s
   }
 });
 
-test('restoreFromCloudIfLocalEmpty falls back to the latest cloud doc when _openid lookup returns empty', async () => {
+test('restoreFromCloudIfLocalEmpty never falls back to an unscoped legacy document', async () => {
   const originalHelper = require.cache[helperPath];
 
   try {
@@ -323,15 +338,47 @@ test('restoreFromCloudIfLocalEmpty falls back to the latest cloud doc when _open
 
     const result = await restoreFromCloudIfLocalEmpty(stub.wx);
 
-    assert.equal(result.restored, true);
-    assert.deepEqual(result.snapshot.records, {
-      '2026-04-02': { note: 'cloud backup', courses: [] }
-    });
+    assert.equal(result.restored, false);
+    assert.equal(result.reason, 'cloud-empty');
     assert.equal(stub.whereCalls >= 3, true);
-    assert.equal(stub.fallbackCalls, 1);
-    assert.deepEqual(stub.storage.balletMoodData, {
-      '2026-04-02': { note: 'cloud backup', courses: [] }
+    assert.equal(stub.fallbackCalls, 0);
+    assert.deepEqual(stub.storage.balletMoodData, {});
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('restoreFromCloudIfLocalEmpty restores a profile-only snapshot', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const { restoreFromCloudIfLocalEmpty } = require('../utils/cloud-sync-helper');
+    const stub = createWxStub({
+      local: {},
+      profileQueryResult: [{
+        _id: 'profile-only',
+        terms: ['Fondu'],
+        monthlyGoals: {
+          '2026-10': { text: '每周练习三次', updatedAt: '2026-10-02T08:00:00.000Z' }
+        },
+        courseTags: [{ name: '提高', selected: false }],
+        updatedAt: new Date('2026-10-02T08:00:00.000Z')
+      }],
+      recordsQueryResult: []
     });
+
+    const result = await restoreFromCloudIfLocalEmpty(stub.wx);
+
+    assert.equal(result.restored, true);
+    assert.equal(result.reason, 'cloud-profile-restored');
+    assert.equal(result.snapshot.monthlyGoals['2026-10'].text, '每周练习三次');
+    assert.equal(stub.storage.balletMoodMonthlyGoals['2026-10'].text, '每周练习三次');
+    assert.deepEqual(stub.storage.balletMoodData, {});
   } finally {
     if (originalHelper) {
       require.cache[helperPath] = originalHelper;
@@ -851,6 +898,43 @@ test('saveSingleRecordToCloud updates one document and removes same-day duplicat
   }
 });
 
+test('saveSingleRecordToCloud deletes the replaced cloud photo after the record update succeeds', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const { saveSingleRecordToCloud } = require('../utils/cloud-sync-helper');
+    const oldPhoto = 'cloud://env-id/ballet-mood/old-photo.jpg';
+    const stub = createWxStub({
+      recordsQueryResult: [{
+        _id: 'record-1',
+        dateKey: '2026-04-08',
+        photo: oldPhoto
+      }]
+    });
+
+    const result = await saveSingleRecordToCloud('2026-04-08', {
+      note: '照片已清空',
+      photo: '',
+      terms: [],
+      bodyParts: [],
+      courses: [],
+      updatedAt: '2026-04-08T10:00:00.000Z'
+    }, stub.wx);
+
+    assert.equal(result.type, 'update');
+    assert.equal(result.photoCleanupPending, false);
+    assert.deepEqual(stub.deleteFileCalls, [{ fileList: [oldPhoto] }]);
+    assert.deepEqual(stub.storage.balletMoodPendingPhotoDeletions, []);
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
 test('deleteSingleRecordInCloud permanently removes every same-day document', async () => {
   const originalHelper = require.cache[helperPath];
 
@@ -875,6 +959,89 @@ test('deleteSingleRecordInCloud permanently removes every same-day document', as
     assert.deepEqual(result, { type: 'remove', count: 2 });
     assert.equal(stub.removedDocIds[RECORDS_COLLECTION].length, 2);
     assert.equal(stub.updatedPayloads[RECORDS_COLLECTION], undefined);
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('deleteSingleRecordInCloud removes attached cloud photos and retries failed cleanup', async () => {
+  const originalHelper = require.cache[helperPath];
+  const photoFileId = 'cloud://env-id/ballet-mood/2026-04-08-photo.jpg';
+
+  try {
+    delete require.cache[helperPath];
+    const {
+      deleteSingleRecordInCloud,
+      flushPendingRecordDeletions
+    } = require('../utils/cloud-sync-helper');
+    const failedStub = createWxStub({
+      local: {
+        balletMoodPendingRecordDeletions: ['2026-04-08']
+      },
+      recordsQueryResult: [{
+        _id: 'record-1',
+        dateKey: '2026-04-08',
+        photo: photoFileId
+      }],
+      failDeleteFileWith: new Error('offline')
+    });
+
+    await assert.rejects(
+      deleteSingleRecordInCloud('2026-04-08', failedStub.wx),
+      /offline/
+    );
+    assert.deepEqual(
+      failedStub.storage.balletMoodPendingPhotoDeletions,
+      [photoFileId]
+    );
+
+    const retryStub = createWxStub({
+      local: {
+        balletMoodPendingRecordDeletions: ['2026-04-08'],
+        balletMoodPendingPhotoDeletions: [photoFileId]
+      },
+      recordsQueryResult: []
+    });
+    const result = await flushPendingRecordDeletions(retryStub.wx);
+
+    assert.deepEqual(result, { completed: ['2026-04-08'], remaining: [] });
+    assert.deepEqual(retryStub.deleteFileCalls, [{ fileList: [photoFileId] }]);
+    assert.deepEqual(retryStub.storage.balletMoodPendingPhotoDeletions, []);
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('flushPendingPhotoDeletions keeps unconfirmed files queued', async () => {
+  const originalHelper = require.cache[helperPath];
+  const photoFileId = 'cloud://env-id/ballet-mood/unconfirmed-photo.jpg';
+
+  try {
+    delete require.cache[helperPath];
+    const { flushPendingPhotoDeletions } = require('../utils/cloud-sync-helper');
+    const stub = createWxStub({
+      local: {
+        balletMoodPendingPhotoDeletions: [photoFileId]
+      },
+      deleteFileResult: { fileList: [] }
+    });
+
+    await assert.rejects(
+      flushPendingPhotoDeletions(stub.wx),
+      /部分云端照片删除失败/
+    );
+    assert.deepEqual(
+      stub.storage.balletMoodPendingPhotoDeletions,
+      [photoFileId]
+    );
   } finally {
     if (originalHelper) {
       require.cache[helperPath] = originalHelper;
@@ -944,7 +1111,12 @@ test('backupSnapshotToCloud mirrors the local snapshot without importing cloud-o
       updatedAt: '2026-04-08T10:00:00.000Z'
     };
     const stub = createWxStub({
-      local: {},
+      local: {
+        balletMoodData: { '2026-04-08': localRecord },
+        balletMoodTerms: ['Adagio'],
+        balletMoodGoal: '',
+        balletMoodCourseTags: [{ name: '入门', selected: false }]
+      },
       profileQueryResult: [{ _id: 'profile-doc' }],
       recordsQueryResult: [{
         _id: 'record-local',
@@ -967,6 +1139,96 @@ test('backupSnapshotToCloud mirrors the local snapshot without importing cloud-o
     assert.deepEqual(Object.keys(result.snapshot.records), ['2026-04-08']);
     assert.deepEqual(Object.keys(stub.storage.balletMoodData), ['2026-04-08']);
     assert.equal(stub.removedDocIds[RECORDS_COLLECTION].length, 1);
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('backupSnapshotToCloud does not overwrite records saved while the backup is running', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const { backupSnapshotToCloud } = require('../utils/cloud-sync-helper');
+    let releaseRecordUpdate;
+    const recordUpdateGate = new Promise((resolve) => {
+      releaseRecordUpdate = resolve;
+    });
+    const initialRecord = {
+      note: '启动前记录',
+      photo: '',
+      courses: [],
+      updatedAt: '2026-10-01T01:00:00.000Z'
+    };
+    const storage = {
+      balletMoodData: { '2026-10-01': initialRecord },
+      balletMoodTerms: ['Adagio'],
+      balletMoodMonthlyGoals: {},
+      balletMoodCourseTags: []
+    };
+    const makeQuery = (data) => {
+      let offset = 0;
+      return {
+        async get() { return { data: offset === 0 ? data : [] }; },
+        skip(value) { offset = value || 0; return this; },
+        limit() { return this; }
+      };
+    };
+    const wxApi = {
+      getStorageSync(key) { return storage[key]; },
+      setStorageSync(key, value) { storage[key] = value; },
+      cloud: {
+        database() {
+          return {
+            collection(name) {
+              const docs = name === PROFILE_COLLECTION
+                ? [{ _id: 'profile-1', updatedAt: new Date() }]
+                : name === RECORDS_COLLECTION
+                  ? [{ _id: 'record-1', dateKey: '2026-10-01', ...initialRecord }]
+                  : [];
+              return {
+                where() { return makeQuery(docs); },
+                doc() {
+                  return {
+                    async update() {
+                      if (name === RECORDS_COLLECTION) await recordUpdateGate;
+                      return { stats: { updated: 1 } };
+                    },
+                    async remove() { return { stats: { removed: 1 } }; }
+                  };
+                },
+                async add() { return { _id: 'new-doc' }; }
+              };
+            }
+          };
+        }
+      }
+    };
+
+    const pendingBackup = backupSnapshotToCloud({
+      records: { '2026-10-01': initialRecord },
+      terms: ['Adagio'],
+      monthlyGoals: {},
+      courseTags: []
+    }, wxApi);
+    await new Promise((resolve) => setImmediate(resolve));
+    storage.balletMoodData = {
+      ...storage.balletMoodData,
+      '2026-10-02': {
+        note: '备份期间新建',
+        photo: '',
+        courses: [],
+        updatedAt: '2026-10-02T01:00:00.000Z'
+      }
+    };
+    releaseRecordUpdate();
+    await pendingBackup;
+
+    assert.deepEqual(Object.keys(storage.balletMoodData).sort(), ['2026-10-01', '2026-10-02']);
   } finally {
     if (originalHelper) {
       require.cache[helperPath] = originalHelper;
@@ -1040,6 +1302,47 @@ test('pushSnapshotToCloud prefers a newer local terms list and course tag list o
     assert.deepEqual(stub.storage.balletMoodCourseTags, [{ name: '提高', selected: false }]);
     assert.equal(stub.storage.balletMoodTermsUpdatedAt, '2026-04-12T10:00:00.000Z');
     assert.equal(stub.storage.balletMoodCourseTagsUpdatedAt, '2026-04-12T10:05:00.000Z');
+  } finally {
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('migrateLocalSnapshotToCloud preserves cloud records when empty local data is not an explicit replacement', async () => {
+  const originalHelper = require.cache[helperPath];
+
+  try {
+    delete require.cache[helperPath];
+    const { migrateLocalSnapshotToCloud } = require('../utils/cloud-sync-helper');
+    const stub = createWxStub({
+      local: {
+        balletMoodData: {},
+        balletMoodTerms: ['Adagio'],
+        balletMoodMonthlyGoals: {},
+        balletMoodCourseTags: []
+      },
+      profileQueryResult: [{
+        _id: 'profile-doc',
+        terms: ['Adagio'],
+        monthlyGoals: {},
+        courseTags: []
+      }],
+      recordsQueryResult: [{
+        _id: 'cloud-record',
+        dateKey: '2026-10-01',
+        note: '必须保留的云端记录',
+        photo: '',
+        updatedAt: new Date('2026-10-01T08:00:00.000Z')
+      }]
+    });
+
+    await migrateLocalSnapshotToCloud(stub.wx, { replaceRecords: false });
+
+    assert.deepEqual(stub.removedDocIds[RECORDS_COLLECTION] || [], []);
+    assert.deepEqual(stub.storage.balletMoodData, {});
   } finally {
     if (originalHelper) {
       require.cache[helperPath] = originalHelper;

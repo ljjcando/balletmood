@@ -3,9 +3,20 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 const _ = db.command;
 const $ = db.command.aggregate;
+const { isCleanupAdmin } = require('./authorization');
 
 exports.main = async (event) => {
   const { dryRun = true } = event || {};
+  const wxContext = cloud.getWXContext();
+  const openid = wxContext && wxContext.OPENID;
+  const allowlistText = process.env.CLEANUP_ADMIN_OPENIDS || '';
+  if (!isCleanupAdmin(openid, allowlistText)) {
+    return {
+      error: true,
+      code: 'FORBIDDEN',
+      message: '无权执行此操作'
+    };
+  }
   const startTime = Date.now();
   const collection = db.collection('ballet_mood_records');
 
@@ -59,9 +70,15 @@ exports.main = async (event) => {
       totalTimeMs: Date.now() - startTime,
       pairsProcessed, deleted,
       docsRemaining: countAfter.total,
-      message: `【执行】处理 ${pairsProcessed} 组，删除 ${deleted} 条，剩余 ${countAfter.total} 条。${countAfter.total > 3500 ? '还有重复，请再次运行。' : '清理完成！'}`
+      message: `【执行】处理 ${pairsProcessed} 组，删除 ${deleted} 条，剩余 ${countAfter.total} 条。请再次运行 dryRun:true 验证是否仍有重复。`
     };
   } catch (err) {
-    return { error: true, message: err.message, timeMs: Date.now() - startTime };
+    console.error('[cleanupDuplicateRecords] cleanup failed', err);
+    return {
+      error: true,
+      code: 'CLEANUP_FAILED',
+      message: '清理执行失败，请查看云函数日志',
+      timeMs: Date.now() - startTime
+    };
   }
 };

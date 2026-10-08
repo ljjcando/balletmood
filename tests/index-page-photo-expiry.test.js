@@ -167,3 +167,41 @@ test('expired photo fallback hides broken thumbnails and surfaces re-upload hint
     }
   }
 });
+
+test('re-uploading an expired photo clears the stale marker immediately', async () => {
+  const originalPage = global.Page;
+  const originalWx = global.wx;
+  let pageConfig;
+
+  try {
+    global.Page = (config) => { pageConfig = config; };
+    global.wx = {
+      chooseImage({ success }) {
+        success({ tempFilePaths: ['/tmp/replacement.jpg'] });
+      }
+    };
+    delete require.cache[indexPath];
+    require('../pages/index/index');
+
+    const pageInstance = buildPageInstance(pageConfig);
+    pageInstance.data.selectedDate = '2026-04-02';
+    pageInstance.data.expiredPhotoDates = {
+      '2026-04-02': true,
+      '2026-04-03': true
+    };
+    pageInstance.data.currentPhotoExpired = true;
+
+    pageConfig.choosePhoto.call(pageInstance);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(pageInstance.data.currentPhoto, '/tmp/replacement.jpg');
+    assert.equal(pageInstance.data.currentPhotoExpired, false);
+    assert.equal(pageInstance.data.expiredPhotoDates['2026-04-02'], undefined);
+    assert.equal(pageInstance.data.expiredPhotoDates['2026-04-03'], true);
+  } finally {
+    global.Page = originalPage;
+    global.wx = originalWx;
+    delete require.cache[indexPath];
+  }
+});

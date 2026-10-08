@@ -6,6 +6,13 @@ const {
   deleteCourseTag
 } = require('./course-tags-helper');
 const {
+  normalizeMonthlyGoals,
+  migrateLegacyGoal,
+  getMonthlyGoalEntry,
+  setMonthlyGoalEntry
+} = require('./monthly-goals-helper');
+const { normalizeCourseDuration } = require('./course-duration-helper');
+const {
   getDefaultSnapshot,
   readLocalSnapshot,
   hasLocalRecords,
@@ -71,6 +78,7 @@ Page({
     // 本月目标
     monthlyGoal: '',
     monthlyGoalUpdatedAt: '',
+    monthlyGoals: {},
 
     // 刷新按钮状态
 
@@ -198,7 +206,7 @@ Page({
   async applySnapshotToPage(snapshot = getDefaultSnapshot()) {
     const safeSnapshot = snapshot || getDefaultSnapshot();
     const normalizedRecords = normalizePageRecords(safeSnapshot.records);
-    const terms = Array.isArray(safeSnapshot.terms) && safeSnapshot.terms.length > 0
+    const terms = Array.isArray(safeSnapshot.terms)
       ? safeSnapshot.terms
       : getDefaultSnapshot().terms;
     const courseTags = normalizeCourseTags(safeSnapshot.courseTags);
@@ -206,6 +214,27 @@ Page({
       name: term,
       selected: false
     }));
+    const normalizedMonthlyGoals = normalizeMonthlyGoals(safeSnapshot.monthlyGoals);
+    const monthlyGoals = migrateLegacyGoal(
+      normalizedMonthlyGoals,
+      safeSnapshot.goal,
+      safeSnapshot.goalUpdatedAt,
+      this.data.currentYear,
+      this.data.currentMonth
+    );
+    const monthlyGoalEntry = getMonthlyGoalEntry(
+      monthlyGoals,
+      this.data.currentYear,
+      this.data.currentMonth
+    );
+
+    if (
+      Object.keys(normalizedMonthlyGoals).length === 0 &&
+      Object.keys(monthlyGoals).length > 0 &&
+      typeof wx.setStorageSync === 'function'
+    ) {
+      wx.setStorageSync('balletMoodMonthlyGoals', monthlyGoals);
+    }
 
     await this.setDataAsync({
       records: normalizedRecords,
@@ -213,8 +242,9 @@ Page({
       terms,
       termsOptions,
       termsUpdatedAt: safeSnapshot.termsUpdatedAt || '',
-      monthlyGoal: safeSnapshot.goal || '',
-      monthlyGoalUpdatedAt: safeSnapshot.goalUpdatedAt || '',
+      monthlyGoal: monthlyGoalEntry.text,
+      monthlyGoalUpdatedAt: monthlyGoalEntry.updatedAt,
+      monthlyGoals,
       courseTags,
       courseTagsUpdatedAt: safeSnapshot.courseTagsUpdatedAt || ''
     });
@@ -230,7 +260,7 @@ Page({
     // 云端来源的 snapshot 已经反映完整最新状态：把可见版本写回本地，
     // 避免下次启动时本地缓存仍含已删除记录、出现"删了又冒出来"的短暂闪烁
     if (typeof source === 'string' && source.indexOf('cloud') === 0) {
-      writeLocalSnapshot(visibleSnapshot, wx);
+      writeLocalSnapshot(this.buildCurrentSnapshot(), wx);
     }
   },
 
@@ -241,6 +271,7 @@ Page({
       termsUpdatedAt: this.data.termsUpdatedAt || '',
       goal: this.data.monthlyGoal || '',
       goalUpdatedAt: this.data.monthlyGoalUpdatedAt || '',
+      monthlyGoals: this.data.monthlyGoals || {},
       courseTags: this.data.courseTags || getDefaultSnapshot().courseTags,
       courseTagsUpdatedAt: this.data.courseTagsUpdatedAt || ''
     };
@@ -261,7 +292,7 @@ Page({
 
   syncCurrentSnapshotInBackground(nextRecords, options = {}) {
     const snapshot = this.buildCurrentSnapshot(nextRecords);
-    const previousSync = this.pendingCloudSyncPromise || Promise.resolve();
+    const previousSync = this.pendingCloudSyncPromise || this.startupSyncPromise || Promise.resolve();
     const nextSync = previousSync
       .catch(() => {})
       .then(() => backupSnapshotToCloud(snapshot, wx, options));
@@ -271,7 +302,7 @@ Page({
   },
 
   syncSingleRecordInBackground(dateKey, record) {
-    const previousSync = this.pendingCloudSyncPromise || Promise.resolve();
+    const previousSync = this.pendingCloudSyncPromise || this.startupSyncPromise || Promise.resolve();
     const nextSync = previousSync
       .catch(() => {})
       .then(async () => {
@@ -280,7 +311,11 @@ Page({
         // 不主动 setData 页面，避免覆盖用户在同步期间的新一轮编辑；下次启动会从本地拿到 cloud:// ID
         if (result && result.record && result.record.photo && result.record.photo !== record.photo) {
           const currentLocal = wx.getStorageSync('balletMoodData') || {};
-          if (currentLocal[dateKey]) {
+          const currentRecord = currentLocal[dateKey];
+          const recordIsStillCurrent = currentRecord &&
+            currentRecord.updatedAt === record.updatedAt &&
+            currentRecord.photo === record.photo;
+          if (recordIsStillCurrent) {
             currentLocal[dateKey] = { ...currentLocal[dateKey], photo: result.record.photo };
             wx.setStorageSync('balletMoodData', currentLocal);
           }
@@ -294,12 +329,12 @@ Page({
     return nextSync.catch(() => {});
   },
 
-  syncSingleRecordDeleteInBackground(dateKey) {
-    const previousSync = this.pendingCloudSyncPromise || Promise.resolve();
+  syncSingleRecordDeleteInBackground(dateKey, photoFileId = '') {
+    const previousSync = this.pendingCloudSyncPromise || this.startupSyncPromise || Promise.resolve();
     const nextSync = previousSync
       .catch(() => {})
       .then(async () => {
-        await deleteSingleRecordInCloud(dateKey, wx);
+        await deleteSingleRecordInCloud(dateKey, wx, { photoFileIds: [photoFileId] });
         clearPendingRecordDeletion(dateKey, wx);
       })
       .catch((error) => {
@@ -331,7 +366,8 @@ Page({
     try {
       await this.applySnapshotToPageAndRender(localSnapshot, 'local-startup');
 
-      if (hasLocalRecords(wx) || isDeviceInitialized(wx)) {
+      const localHasRecords = hasLocalRecords(wx);
+      if (localHasRecords || isDeviceInitialized(wx)) {
         markDeviceInitialized(wx);
         // 当前设备以本地为准：先补做失败的云端删除，再把完整本地快照备份到云端。
         // 不读取云端覆盖本地，因此不再承担多设备实时同步。
@@ -339,7 +375,9 @@ Page({
           .catch((error) => {
             console.log('[index] pending cloud delete retry failed:', error && error.message);
           })
-          .then(() => migrateLocalSnapshotToCloud(wx))
+          .then(() => migrateLocalSnapshotToCloud(wx, {
+            replaceRecords: localHasRecords
+          }))
           .catch((error) => {
             console.log('[index] background local backup failed:', error && error.message);
           });
@@ -373,7 +411,7 @@ Page({
       currentYear--;
     }
     this.setData({ currentYear, currentMonth });
-    this.renderCalendar();
+    return this.renderCalendar();
   },
 
   nextMonth() {
@@ -383,8 +421,14 @@ Page({
       currentMonth = 1;
       currentYear++;
     }
+    const today = new Date();
+    const nextMonthIsFuture = currentYear > today.getFullYear() ||
+      (currentYear === today.getFullYear() && currentMonth > today.getMonth() + 1);
+    if (nextMonthIsFuture) {
+      return;
+    }
     this.setData({ currentYear, currentMonth });
-    this.renderCalendar();
+    return this.renderCalendar();
   },
 
   // ==================== 日历渲染 ====================
@@ -401,6 +445,11 @@ Page({
 
     const calendarDays = [];
     const today = new Date();
+    const monthlyGoalEntry = getMonthlyGoalEntry(
+      this.data.monthlyGoals,
+      currentYear,
+      currentMonth
+    );
 
     // 空白日期
     for (let i = 0; i < startingDay; i++) {
@@ -429,13 +478,21 @@ Page({
     // 只更新日历数据和月份名称，currentMonth 保持为数字
     await this.setDataAsync({
       calendarDays,
-      currentMonthName: monthNames[currentMonth - 1]
+      currentMonthName: monthNames[currentMonth - 1],
+      monthlyGoal: monthlyGoalEntry.text,
+      monthlyGoalUpdatedAt: monthlyGoalEntry.updatedAt
     });
   },
 
   // ==================== 日期点击 ====================
   onDayClick(e) {
     const { date } = e.currentTarget.dataset;
+    if (typeof date !== 'string' || !date) {
+      return;
+    }
+    if (date > this.formatDate(new Date())) {
+      return;
+    }
     const record = this.data.allRecords[date];
 
     // 只要有记录，就进入展示模式（明信片视图）
@@ -571,10 +628,13 @@ Page({
               wxApi: wx,
               photoPath
             });
+            const expiredPhotoDates = { ...(this.data.expiredPhotoDates || {}) };
+            delete expiredPhotoDates[this.data.selectedDate];
 
             this.setData({
               currentPhoto: persistentPhotoPath,
-              currentPhotoExpired: false
+              currentPhotoExpired: false,
+              expiredPhotoDates
             });
           }
         });
@@ -655,10 +715,9 @@ Page({
       success: (res) => {
         if (res.confirm) {
           const terms = this.data.terms.filter((_, i) => i !== index);
-          const termsOptions = terms.map(term => ({
-            name: term,
-            selected: false
-          }));
+          const termsOptions = this.data.termsOptions
+            .filter((_, i) => i !== index)
+            .map(item => ({ ...item }));
           const termsUpdatedAt = this.createMutationTimestamp();
 
           this.setData({ terms, termsOptions, termsUpdatedAt });
@@ -717,10 +776,9 @@ Page({
       success: (res) => {
         if (res.confirm) {
           const terms = this.data.terms.filter((_, i) => i !== index);
-          const termsOptions = terms.map(term => ({
-            name: term,
-            selected: false
-          }));
+          const termsOptions = this.data.termsOptions
+            .filter((_, i) => i !== index)
+            .map(item => ({ ...item }));
           const termsUpdatedAt = this.createMutationTimestamp();
           this.setData({ terms, termsOptions, termsUpdatedAt });
           wx.setStorageSync('balletMoodTerms', terms);
@@ -983,7 +1041,13 @@ Page({
         .map(item => item.name);
 
       // 过滤有效课程
-      const validCourses = currentCourses.filter(c => c.name && c.name.trim());
+      const validCourses = currentCourses
+        .filter((course) => course && typeof course.name === 'string' && course.name.trim())
+        .map((course) => ({
+          ...course,
+          name: course.name.trim(),
+          duration: normalizeCourseDuration(course.duration)
+        }));
 
       const record = {
         photo: currentPhoto,
@@ -1018,9 +1082,15 @@ Page({
       // 不再拉全量、不再重写其他记录。
       this.syncSingleRecordInBackground(selectedDate, record);
     } catch (error) {
+      const isValidationError = error && error.code === 'INVALID_COURSE_DURATION';
+      if (!isValidationError) {
+        console.error('[index] saveRecord failed');
+      }
       wx.showModal({
         title: '保存失败',
-        content: `错误信息: ${error.message || JSON.stringify(error)}`,
+        content: isValidationError
+          ? error.message
+          : '保存时发生异常，请稍后重试。你的其他记录不会受到影响。',
         showCancel: false
       });
     }
@@ -1034,6 +1104,7 @@ Page({
         if (res.confirm) {
           const selectedDate = this.data.selectedDate;
           const allRecords = { ...this.data.allRecords };
+          const photoFileId = allRecords[selectedDate] && allRecords[selectedDate].photo;
           queueRecordDeletion(selectedDate, wx);
           delete allRecords[selectedDate];
           this.trackLocalMutation();
@@ -1043,7 +1114,7 @@ Page({
             allRecords: normalizePageRecords(allRecords)
           });
           wx.setStorageSync('balletMoodData', allRecords);
-          this.syncSingleRecordDeleteInBackground(selectedDate);
+          this.syncSingleRecordDeleteInBackground(selectedDate, photoFileId);
 
           this.closeEditModal();
           this.renderCalendar();
@@ -1060,7 +1131,16 @@ Page({
       return;
     }
     const monthlyGoalUpdatedAt = this.createMutationTimestamp();
-    this.setData({ monthlyGoal: goal, monthlyGoalUpdatedAt });
+    const monthlyGoals = setMonthlyGoalEntry(
+      this.data.monthlyGoals,
+      this.data.currentYear,
+      this.data.currentMonth,
+      goal,
+      monthlyGoalUpdatedAt
+    );
+    this.setData({ monthlyGoal: goal, monthlyGoalUpdatedAt, monthlyGoals });
+    wx.setStorageSync('balletMoodMonthlyGoals', monthlyGoals);
+    // 保留旧字段，便于旧版本客户端读取最近一次保存的目标。
     wx.setStorageSync('balletMoodGoal', goal);
     wx.setStorageSync('balletMoodGoalUpdatedAt', monthlyGoalUpdatedAt);
     this.trackLocalMutation();
@@ -1132,6 +1212,7 @@ Page({
         if (res.confirm) {
           const selectedDate = this.data.selectedDate;
           const allRecords = { ...this.data.allRecords };
+          const photoFileId = allRecords[selectedDate] && allRecords[selectedDate].photo;
           queueRecordDeletion(selectedDate, wx);
           delete allRecords[selectedDate];
           this.trackLocalMutation();
@@ -1141,7 +1222,7 @@ Page({
             allRecords: normalizePageRecords(allRecords)
           });
           wx.setStorageSync('balletMoodData', allRecords);
-          this.syncSingleRecordDeleteInBackground(selectedDate);
+          this.syncSingleRecordDeleteInBackground(selectedDate, photoFileId);
 
           this.closePostcard();
           this.renderCalendar();

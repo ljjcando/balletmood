@@ -1,51 +1,207 @@
-<!-- 舞者成就统计页 -->
-<view class="stats-container">
+<!-- 月度练习统计 -->
+<view
+  class="custom-nav"
+  style="height: {{customNavHeight}}px; padding-top: {{statusBarHeight}}px;"
+>
+  <view class="custom-nav-content" style="height: {{navBarHeight}}px;">
+    <text class="custom-nav-title">舞者成就</text>
+  </view>
+</view>
+<view class="custom-nav-placeholder" style="height: {{customNavHeight}}px;"></view>
 
-  <!-- 顶部统计卡片 -->
-  <view class="summary-cards">
-    <view class="summary-card main">
-      <text class="summary-value">{{totalHours}}</text>
-      <text class="summary-label">累计课时（小时）</text>
+<view class="stats-container">
+  <view class="period-switch" role="tablist" aria-label="统计周期">
+    <view
+      class="period-option {{statsPeriodMode === 'month' ? 'active' : ''}}"
+      data-period="month"
+      bindtap="switchStatsPeriod"
+      role="tab"
+    >月度</view>
+    <view
+      class="period-option {{statsPeriodMode === 'year' ? 'active' : ''}}"
+      data-period="year"
+      bindtap="switchStatsPeriod"
+      role="tab"
+    >年度</view>
+  </view>
+
+  <block wx:if="{{statsPeriodMode === 'month'}}">
+  <view class="month-nav {{isCurrentMonth ? 'current' : ''}}">
+    <view class="month-button" bindtap="prevMonth" role="button" aria-label="上个月">‹</view>
+    <picker
+      class="month-picker"
+      mode="date"
+      fields="month"
+      value="{{selectedMonthValue}}"
+      start="{{monthPickerStart}}"
+      end="{{monthPickerEnd}}"
+      bindchange="onMonthPickerChange"
+    >
+      <view class="month-title-trigger" role="button" aria-label="选择年份和月份">
+        <text class="month-title">{{currentYear}}年{{currentMonth}}月</text>
+        <text class="month-disclosure">⌄</text>
+      </view>
+    </picker>
+    <view
+      class="month-button {{isNextMonthDisabled ? 'disabled' : ''}}"
+      bindtap="nextMonth"
+      role="button"
+      aria-label="下个月"
+    >›</view>
+  </view>
+  <view wx:if="{{!isCurrentMonth}}" class="return-current" bindtap="returnToCurrentMonth" role="button">回到本月</view>
+
+  <view class="monthly-hero">
+    <text class="hero-eyebrow">MONTHLY PRACTICE</text>
+    <view class="hero-hours-row">
+      <text class="hero-hours">{{monthlyHours}}</text>
+      <text class="hero-unit">小时 · 本月练习</text>
     </view>
-    <view class="summary-card">
-      <text class="summary-value">{{totalDays}}</text>
-      <text class="summary-label">坚持天数</text>
-    </view>
-    <view class="summary-card">
-      <text class="summary-value">{{monthlyHours}}</text>
-      <text class="summary-label">本月课时（小时）</text>
+    <view class="hero-meta">
+      <text><text class="hero-meta-number">{{monthlyDays}}</text> 天练习</text>
+      <text><text class="hero-meta-number">{{monthlyLessons}}</text> 节课程</text>
     </view>
   </view>
 
-  <!-- 能量场预留位 -->
-  <view class="section">
-    <view class="section-title">能量分布</view>
-    <view class="energy-placeholder" id="energy-field">
-      <view class="energy-item" wx:for="{{bodyPartsStats}}" wx:key="fullName">
-        <view class="energy-bubble" style="{{item.bubbleStyle}}">
-          <text class="bubble-name">{{item.name}}</text>
-          <text class="bubble-count">{{item.count}}</text>
+  <view class="section-heading">
+    <text class="section-title">课程分布</text>
+    <text class="section-note">按练习时长</text>
+  </view>
+  <view class="course-panel">
+    <view class="course-stat-item" wx:for="{{courseDistribution}}" wx:key="name">
+      <view class="course-stat-header">
+        <text class="course-stat-name">{{item.name}}</text>
+        <text class="course-stat-hours">{{item.hours}}h · {{item.percentage}}%</text>
+      </view>
+      <view class="course-stat-track">
+        <view class="course-stat-bar" style="{{item.barStyle}}"></view>
+      </view>
+    </view>
+    <view wx:if="{{courseDistribution.length === 0}}" class="empty-state">
+      <text>这个月还没有课程记录</text>
+    </view>
+  </view>
+
+  <view class="section-heading">
+    <text class="section-title">练习日历</text>
+    <text class="section-note">深色代表时长更久</text>
+  </view>
+  <view class="practice-calendar">
+    <view class="calendar-week">
+      <text>一</text><text>二</text><text>三</text><text>四</text><text>五</text><text>六</text><text>日</text>
+    </view>
+    <view class="calendar-days">
+      <view
+        wx:for="{{calendarDays}}"
+        wx:key="key"
+        class="calendar-day {{item.isOutside ? 'outside' : ''}} {{item.hasPractice ? item.intensityClass : ''}}"
+      >{{item.day}}</view>
+    </view>
+    <view class="calendar-footer" wx:if="{{monthlyDays > 0}}">
+      <text><text class="calendar-summary-number">{{monthlyDays}} 天</text>练习 · 最长连续 {{longestStreak}} 天</text>
+      <view class="intensity-legend">
+        <text>短</text><view class="legend-dot legend-short"></view><view class="legend-dot legend-medium"></view><view class="legend-dot legend-long"></view><text>长</text>
+      </view>
+    </view>
+    <view class="calendar-footer empty-calendar-footer" wx:else>
+      <text>这个月还没有练习记录</text>
+    </view>
+  </view>
+
+  <view class="history-total">
+    <text>历史累计 {{totalHours}} 小时 · 共记录 {{totalDays}} 天</text>
+  </view>
+  </block>
+
+  <block wx:else>
+    <view class="month-nav current">
+      <view class="month-button" bindtap="prevYear" role="button" aria-label="上一年">‹</view>
+      <picker
+        class="month-picker"
+        mode="selector"
+        range="{{yearPickerOptions}}"
+        value="{{selectedYearIndex}}"
+        bindchange="onYearPickerChange"
+      >
+        <view class="month-title-trigger" role="button" aria-label="选择年份">
+          <text class="month-title">{{annualYear}}年</text>
+          <text class="month-disclosure">⌄</text>
+        </view>
+      </picker>
+      <view
+        class="month-button {{isNextYearDisabled ? 'disabled' : ''}}"
+        bindtap="nextYear"
+        role="button"
+        aria-label="下一年"
+      >›</view>
+    </view>
+
+    <view class="monthly-hero annual-hero">
+      <text class="hero-eyebrow">YEAR IN PRACTICE</text>
+      <view class="hero-hours-row">
+        <text class="hero-hours">{{annualHours}}</text>
+        <text class="hero-unit">小时 · 本年练习</text>
+      </view>
+      <view class="hero-meta">
+        <text><text class="hero-meta-number">{{annualDays}}</text> 天练习</text>
+        <text><text class="hero-meta-number">{{annualLessons}}</text> 节课程</text>
+      </view>
+    </view>
+
+    <view class="section-heading">
+      <text class="section-title">全年练习趋势</text>
+      <text class="section-note">按月课时</text>
+    </view>
+    <view class="annual-trend-panel">
+      <view class="annual-bars">
+        <view
+          class="annual-bar {{item.isBest ? 'best' : ''}}"
+          wx:for="{{annualMonthlyBars}}"
+          wx:key="month"
+        >
+          <view class="annual-bar-track">
+            <view class="annual-bar-fill" style="{{item.barStyle}}"></view>
+          </view>
+          <text>{{item.month}}</text>
         </view>
       </view>
-      <text wx:if="{{bodyPartsStats.length === 0}}" class="empty-hint">暂无数据</text>
+      <view class="annual-insights" wx:if="{{annualDays > 0}}">
+        <view class="annual-insight">
+          <text class="annual-insight-value">{{annualBestMonthLabel}}</text>
+          <text>{{annualBestMonthDetail}}</text>
+        </view>
+        <view class="annual-insight">
+          <text class="annual-insight-value">{{annualLongestStreak}}天</text>
+          <text>最长连续练习</text>
+        </view>
+      </view>
+      <view class="empty-state" wx:else>
+        <text>这一年还没有练习记录</text>
+      </view>
     </view>
-  </view>
 
-  <!-- 课程统计 -->
-  <view class="section">
-    <view class="section-title">课程分布</view>
-    <view class="course-stats">
-      <view class="course-stat-item" wx:for="{{courseDistribution}}" wx:key="name">
+    <view class="section-heading">
+      <text class="section-title">年度课程分布</text>
+      <text class="section-note">按练习时长</text>
+    </view>
+    <view class="course-panel">
+      <view class="course-stat-item" wx:for="{{annualCourseDistribution}}" wx:key="name">
         <view class="course-stat-header">
           <text class="course-stat-name">{{item.name}}</text>
-          <text class="course-stat-hours">{{item.hours}}小时 ({{item.percentage}}%)</text>
+          <text class="course-stat-hours">{{item.hours}}h · {{item.percentage}}%</text>
         </view>
-        <view class="course-stat-bar-wrapper">
+        <view class="course-stat-track">
           <view class="course-stat-bar" style="{{item.barStyle}}"></view>
         </view>
       </view>
-      <text wx:if="{{courseDistribution.length === 0}}" class="empty-hint">暂无课程记录</text>
+      <view wx:if="{{annualCourseDistribution.length === 0}}" class="empty-state">
+        <text>这一年还没有课程记录</text>
+      </view>
     </view>
-  </view>
 
+    <view class="history-total">
+      <text wx:if="{{annualDays > 0}}">这一年，你把坚持写进了 {{annualDays}} 个练习日。</text>
+      <text wx:else>从一次练习开始，写下这一年的故事。</text>
+    </view>
+  </block>
 </view>

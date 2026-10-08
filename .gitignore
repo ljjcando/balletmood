@@ -1,3 +1,5 @@
 .DS_Store
 project.private.config.json
 .mcp.json
+.playwright-mcp/
+output/

@@ -625,7 +625,7 @@ test('onLoad restores cloud data when local records are empty', async () => {
   }
 });
 
-test('onLoad does not restore cloud records on an initialized device with an empty local history', async () => {
+test('onLoad preserves cloud records when an initialized device has unexpectedly empty local data', async () => {
   const originalPage = global.Page;
   const originalWx = global.wx;
   const originalHelper = require.cache[helperPath];
@@ -633,6 +633,7 @@ test('onLoad does not restore cloud records on an initialized device with an emp
   let pageConfig;
   let restoreCalls = 0;
   let backupCalls = 0;
+  let backupOptions;
 
   require.cache[helperPath] = {
     id: helperPath,
@@ -665,8 +666,9 @@ test('onLoad does not restore cloud records on an initialized device with an emp
           }
         });
       },
-      migrateLocalSnapshotToCloud() {
+      migrateLocalSnapshotToCloud(wxApi, options) {
         backupCalls += 1;
+        backupOptions = options;
         return Promise.resolve({ migrated: true });
       }
     }
@@ -697,6 +699,7 @@ test('onLoad does not restore cloud records on an initialized device with an emp
     assert.deepEqual(pageInstance.data.allRecords, {});
     assert.equal(restoreCalls, 0);
     assert.equal(backupCalls, 1);
+    assert.deepEqual(backupOptions, { replaceRecords: false });
   } finally {
     global.Page = originalPage;
     global.wx = originalWx;
@@ -817,6 +820,7 @@ test('deleteFromPostcard removes the local record and sends a precise cloud dele
 
   let pageConfig;
   const deletedDateKeys = [];
+  const deletedPhotoFileIds = [];
   const queuedDeletionDates = [];
   const storageWrites = [];
 
@@ -858,8 +862,9 @@ test('deleteFromPostcard removes the local record and sends a precise cloud dele
       restoreFromCloudIfLocalEmpty() {
         return Promise.resolve({ restored: false, reason: 'local-exists', snapshot: null });
       },
-      deleteSingleRecordInCloud(dateKey) {
+      deleteSingleRecordInCloud(dateKey, wxApi, options = {}) {
         deletedDateKeys.push(dateKey);
+        deletedPhotoFileIds.push(...(options.photoFileIds || []));
         return Promise.resolve({ type: 'remove', count: 1 });
       },
       queueRecordDeletion(dateKey) {
@@ -911,6 +916,7 @@ test('deleteFromPostcard removes the local record and sends a precise cloud dele
     assert.equal(storageWrites.some(({ key, value }) => key === 'balletMoodData' && !value['2026-04-02']), true);
     assert.deepEqual(queuedDeletionDates, ['2026-04-02']);
     assert.deepEqual(deletedDateKeys, ['2026-04-02']);
+    assert.deepEqual(deletedPhotoFileIds, ['cloud://env/expired.jpg']);
   } finally {
     global.Page = originalPage;
     global.wx = originalWx;
@@ -1689,6 +1695,141 @@ test('onLoad waits for async setData before rendering restored cloud records', a
     assert.deepEqual(pageInstance.data.allRecords, {
       '2026-04-03': { note: 'cloud restored', courses: [] }
     });
+  } finally {
+    global.Page = originalPage;
+    global.wx = originalWx;
+    delete require.cache[indexPath];
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('precise record sync waits for the startup backup before writing', async () => {
+  const originalPage = global.Page;
+  const originalWx = global.wx;
+  const originalHelper = require.cache[helperPath];
+  let pageConfig;
+  let releaseStartup;
+  const events = [];
+
+  require.cache[helperPath] = {
+    id: helperPath,
+    filename: helperPath,
+    loaded: true,
+    exports: {
+      ...cloudSyncHelperDefaults,
+      async saveSingleRecordToCloud() {
+        events.push('record-sync');
+        return { record: { note: '最新记录', photo: '' } };
+      }
+    }
+  };
+
+  try {
+    global.Page = (config) => { pageConfig = config; };
+    global.wx = {
+      getStorageSync() { return {}; },
+      setStorageSync() {}
+    };
+    delete require.cache[indexPath];
+    require('../pages/index/index');
+
+    const pageInstance = buildPageInstance(pageConfig);
+    pageInstance.startupSyncPromise = new Promise((resolve) => {
+      releaseStartup = () => {
+        events.push('startup-complete');
+        resolve();
+      };
+    });
+
+    const pending = pageConfig.syncSingleRecordInBackground.call(
+      pageInstance,
+      '2026-10-02',
+      { note: '最新记录', photo: '' }
+    );
+    await flushMicrotasks();
+    assert.deepEqual(events, []);
+
+    releaseStartup();
+    await pending;
+    assert.deepEqual(events, ['startup-complete', 'record-sync']);
+  } finally {
+    global.Page = originalPage;
+    global.wx = originalWx;
+    delete require.cache[indexPath];
+    if (originalHelper) {
+      require.cache[helperPath] = originalHelper;
+    } else {
+      delete require.cache[helperPath];
+    }
+  }
+});
+
+test('an older photo upload never overwrites a newer local edit for the same day', async () => {
+  const originalPage = global.Page;
+  const originalWx = global.wx;
+  const originalHelper = require.cache[helperPath];
+  let pageConfig;
+  let finishUpload;
+  const dateKey = '2026-10-08';
+  const firstRecord = {
+    note: '照片 A',
+    photo: '/local/photo-a.jpg',
+    updatedAt: '2026-10-08T08:00:00.000Z'
+  };
+  const newerRecord = {
+    note: '照片 B',
+    photo: '/local/photo-b.jpg',
+    updatedAt: '2026-10-08T08:01:00.000Z'
+  };
+  const storage = {
+    balletMoodData: { [dateKey]: { ...firstRecord } }
+  };
+
+  require.cache[helperPath] = {
+    id: helperPath,
+    filename: helperPath,
+    loaded: true,
+    exports: {
+      ...cloudSyncHelperDefaults,
+      saveSingleRecordToCloud() {
+        return new Promise((resolve) => {
+          finishUpload = () => resolve({
+            record: {
+              ...firstRecord,
+              photo: 'cloud://env/photo-a.jpg'
+            }
+          });
+        });
+      }
+    }
+  };
+
+  try {
+    global.Page = (config) => { pageConfig = config; };
+    global.wx = {
+      getStorageSync(key) { return storage[key]; },
+      setStorageSync(key, value) { storage[key] = value; }
+    };
+    delete require.cache[indexPath];
+    require('../pages/index/index');
+
+    const pageInstance = buildPageInstance(pageConfig);
+    const pending = pageConfig.syncSingleRecordInBackground.call(
+      pageInstance,
+      dateKey,
+      firstRecord
+    );
+    await flushMicrotasks();
+
+    storage.balletMoodData = { [dateKey]: { ...newerRecord } };
+    finishUpload();
+    await pending;
+
+    assert.deepEqual(storage.balletMoodData[dateKey], newerRecord);
   } finally {
     global.Page = originalPage;
     global.wx = originalWx;

@@ -7,5 +7,5 @@
   "enablePullDownRefresh": false,
   "enableShareAppMessage": true,
   "enableShareTimeline": true,
-  "disableScroll": false
+  "disableScroll": true
 }

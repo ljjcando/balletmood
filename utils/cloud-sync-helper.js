@@ -1,4 +1,8 @@
 const { normalizeCourseTags } = require('../pages/index/course-tags-helper');
+const {
+  normalizeMonthlyGoals,
+  mergeMonthlyGoals
+} = require('../pages/index/monthly-goals-helper');
 
 const COLLECTION_NAME = 'ballet_mood_users';
 const PROFILE_COLLECTION_NAME = 'ballet_mood_profiles';
@@ -10,10 +14,12 @@ const STORAGE_KEYS = {
   termsUpdatedAt: 'balletMoodTermsUpdatedAt',
   goal: 'balletMoodGoal',
   goalUpdatedAt: 'balletMoodGoalUpdatedAt',
+  monthlyGoals: 'balletMoodMonthlyGoals',
   courseTags: 'balletMoodCourseTags',
   courseTagsUpdatedAt: 'balletMoodCourseTagsUpdatedAt',
   deviceInitialized: 'balletMoodDeviceInitialized',
-  pendingRecordDeletions: 'balletMoodPendingRecordDeletions'
+  pendingRecordDeletions: 'balletMoodPendingRecordDeletions',
+  pendingPhotoDeletions: 'balletMoodPendingPhotoDeletions'
 };
 
 const DEFAULT_TERMS = ['Rond de jambe', 'Adagio', 'jete', 'fondu', 'passe'];
@@ -32,6 +38,18 @@ function normalizeRecordDateKey(key) {
   const simpleDateMatch = trimmedKey.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
   if (simpleDateMatch) {
     const [, year, month, day] = simpleDateMatch;
+    const normalizedYear = Number(year);
+    const normalizedMonth = Number(month);
+    const normalizedDay = Number(day);
+    const parsedTimestamp = Date.UTC(normalizedYear, normalizedMonth - 1, normalizedDay);
+    const parsedDate = new Date(parsedTimestamp);
+    if (
+      parsedDate.getUTCFullYear() !== normalizedYear ||
+      parsedDate.getUTCMonth() + 1 !== normalizedMonth ||
+      parsedDate.getUTCDate() !== normalizedDay
+    ) {
+      return '';
+    }
     return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
   }
 
@@ -290,6 +308,7 @@ function getDefaultSnapshot() {
     termsUpdatedAt: '',
     goal: '',
     goalUpdatedAt: '',
+    monthlyGoals: {},
     courseTags: normalizeCourseTags(DEFAULT_COURSE_TAGS),
     courseTagsUpdatedAt: ''
   };
@@ -301,10 +320,13 @@ function normalizeSnapshot(snapshot = {}) {
 
   return {
     records: Object.keys(normalizedRecords).length > 0 ? normalizedRecords : defaults.records,
-    terms: Array.isArray(snapshot.terms) && snapshot.terms.length > 0 ? snapshot.terms : defaults.terms,
+    terms: Array.isArray(snapshot.terms)
+      ? snapshot.terms.filter((term) => typeof term === 'string' && term.trim())
+      : defaults.terms,
     termsUpdatedAt: normalizeMetadataTimestamp(snapshot.termsUpdatedAt),
     goal: typeof snapshot.goal === 'string' ? snapshot.goal : defaults.goal,
     goalUpdatedAt: normalizeMetadataTimestamp(snapshot.goalUpdatedAt),
+    monthlyGoals: normalizeMonthlyGoals(snapshot.monthlyGoals),
     courseTags: normalizeCourseTags(snapshot.courseTags),
     courseTagsUpdatedAt: normalizeMetadataTimestamp(snapshot.courseTagsUpdatedAt)
   };
@@ -341,6 +363,10 @@ function mergeSnapshots(localSnapshot = {}, cloudSnapshot = {}) {
     termsUpdatedAt: mergedTerms.updatedAt,
     goal: mergedGoal.value,
     goalUpdatedAt: mergedGoal.updatedAt,
+    monthlyGoals: mergeMonthlyGoals(
+      normalizedLocalSnapshot.monthlyGoals,
+      normalizedCloudSnapshot.monthlyGoals
+    ),
     courseTags: mergedCourseTags.value,
     courseTagsUpdatedAt: mergedCourseTags.updatedAt
   };
@@ -353,6 +379,7 @@ function readLocalSnapshot(wxApi = wx) {
     termsUpdatedAt: wxApi.getStorageSync(STORAGE_KEYS.termsUpdatedAt),
     goal: wxApi.getStorageSync(STORAGE_KEYS.goal),
     goalUpdatedAt: wxApi.getStorageSync(STORAGE_KEYS.goalUpdatedAt),
+    monthlyGoals: wxApi.getStorageSync(STORAGE_KEYS.monthlyGoals),
     courseTags: wxApi.getStorageSync(STORAGE_KEYS.courseTags),
     courseTagsUpdatedAt: wxApi.getStorageSync(STORAGE_KEYS.courseTagsUpdatedAt)
   });
@@ -365,6 +392,7 @@ function writeLocalSnapshot(snapshot, wxApi = wx) {
   wxApi.setStorageSync(STORAGE_KEYS.termsUpdatedAt, normalized.termsUpdatedAt);
   wxApi.setStorageSync(STORAGE_KEYS.goal, normalized.goal);
   wxApi.setStorageSync(STORAGE_KEYS.goalUpdatedAt, normalized.goalUpdatedAt);
+  wxApi.setStorageSync(STORAGE_KEYS.monthlyGoals, normalized.monthlyGoals);
   wxApi.setStorageSync(STORAGE_KEYS.courseTags, normalized.courseTags);
   wxApi.setStorageSync(STORAGE_KEYS.courseTagsUpdatedAt, normalized.courseTagsUpdatedAt);
   return normalized;
@@ -433,6 +461,67 @@ function clearPendingRecordDeletion(dateKey, wxApi = wx) {
   return pending;
 }
 
+function getPendingPhotoDeletions(wxApi = wx) {
+  const stored = wxApi.getStorageSync(STORAGE_KEYS.pendingPhotoDeletions);
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+
+  return stored
+    .filter(isCloudFileId)
+    .filter((fileId, index, all) => all.indexOf(fileId) === index);
+}
+
+function queuePhotoDeletions(fileIds, wxApi = wx) {
+  const pending = getPendingPhotoDeletions(wxApi);
+  const nextPending = [
+    ...pending,
+    ...(Array.isArray(fileIds) ? fileIds : [fileIds]).filter(isCloudFileId)
+  ].filter((fileId, index, all) => all.indexOf(fileId) === index);
+
+  wxApi.setStorageSync(STORAGE_KEYS.pendingPhotoDeletions, nextPending);
+  return nextPending;
+}
+
+async function flushPendingPhotoDeletions(wxApi = wx) {
+  const pending = getPendingPhotoDeletions(wxApi);
+  if (pending.length === 0) {
+    return { completed: [], remaining: [] };
+  }
+
+  if (!wxApi || !wxApi.cloud || typeof wxApi.cloud.deleteFile !== 'function') {
+    throw new Error('云存储删除接口不可用');
+  }
+
+  const completed = [];
+  let remaining = [...pending];
+
+  while (remaining.length > 0) {
+    const batch = remaining.slice(0, 50);
+    const result = await wxApi.cloud.deleteFile({ fileList: batch });
+    const resultItems = Array.isArray(result && result.fileList) ? result.fileList : [];
+    const successful = new Set(
+      resultItems
+        .filter((item) => item && item.status === 0)
+        .map((item) => item.fileID)
+        .filter(isCloudFileId)
+    );
+    const failedBatch = batch.filter((fileId) => !successful.has(fileId));
+
+    completed.push(...batch.filter((fileId) => successful.has(fileId)));
+    remaining = [...failedBatch, ...remaining.slice(batch.length)];
+    wxApi.setStorageSync(STORAGE_KEYS.pendingPhotoDeletions, remaining);
+
+    if (failedBatch.length > 0) {
+      const error = new Error('部分云端照片删除失败');
+      error.failedFileIds = failedBatch;
+      throw error;
+    }
+  }
+
+  return { completed, remaining };
+}
+
 function hasNonEmptyRecords(doc) {
   return !!(doc && doc.records && Object.keys(normalizeRecords(doc.records)).length > 0);
 }
@@ -480,13 +569,7 @@ async function getCurrentUserDoc(wxApi = wx) {
   if (sameUserDoc) {
     return sameUserDoc;
   }
-
-  const fallbackResult = await collection
-    .orderBy('updatedAt', 'desc')
-    .limit(1)
-    .get();
-
-  return pickBestCloudDoc(fallbackResult.data);
+  return null;
 }
 
 function buildProfilePayload(snapshot) {
@@ -496,10 +579,11 @@ function buildProfilePayload(snapshot) {
     termsUpdatedAt: normalized.termsUpdatedAt ? new Date(normalized.termsUpdatedAt) : null,
     goal: normalized.goal,
     goalUpdatedAt: normalized.goalUpdatedAt ? new Date(normalized.goalUpdatedAt) : null,
+    monthlyGoals: normalized.monthlyGoals,
     courseTags: normalized.courseTags,
     courseTagsUpdatedAt: normalized.courseTagsUpdatedAt ? new Date(normalized.courseTagsUpdatedAt) : null,
     updatedAt: new Date(),
-    schemaVersion: 2
+    schemaVersion: 3
   };
 }
 
@@ -646,6 +730,7 @@ async function fetchStructuredCloudSnapshot(wxApi = wx) {
     termsUpdatedAt: profileDoc && profileDoc.termsUpdatedAt,
     goal: profileDoc && profileDoc.goal,
     goalUpdatedAt: profileDoc && profileDoc.goalUpdatedAt,
+    monthlyGoals: profileDoc && profileDoc.monthlyGoals,
     courseTags: profileDoc && profileDoc.courseTags,
     courseTagsUpdatedAt: profileDoc && profileDoc.courseTagsUpdatedAt
   });
@@ -760,6 +845,23 @@ async function saveSingleRecordToCloud(dateKey, record, wxApi = wx) {
 
   const existingDocs = Array.isArray(existingResult.data) ? existingResult.data : [];
   const payload = buildRecordPayload(normalizedDateKey, finalRecord);
+  const obsoletePhotoIds = existingDocs
+    .map((doc) => doc && doc.photo)
+    .filter((fileId) => isCloudFileId(fileId) && fileId !== finalRecord.photo)
+    .filter((fileId, index, all) => all.indexOf(fileId) === index);
+
+  const cleanupObsoletePhotos = async () => {
+    if (obsoletePhotoIds.length === 0) {
+      return false;
+    }
+    queuePhotoDeletions(obsoletePhotoIds, wxApi);
+    try {
+      await flushPendingPhotoDeletions(wxApi);
+      return false;
+    } catch (error) {
+      return true;
+    }
+  };
 
   if (existingDocs.length > 0) {
     const keepDoc = existingDocs[0];
@@ -770,7 +872,13 @@ async function saveSingleRecordToCloud(dateKey, record, wxApi = wx) {
         throw error;
       }
       const addResult = await collection.add({ data: payload });
-      return { type: 'add', docId: addResult._id, record: finalRecord };
+      for (const existingDoc of existingDocs) {
+        if (existingDoc && existingDoc._id) {
+          await collection.doc(existingDoc._id).remove();
+        }
+      }
+      const photoCleanupPending = await cleanupObsoletePhotos();
+      return { type: 'add', docId: addResult._id, record: finalRecord, photoCleanupPending };
     }
 
     for (let i = 1; i < existingDocs.length; i++) {
@@ -779,18 +887,27 @@ async function saveSingleRecordToCloud(dateKey, record, wxApi = wx) {
       }
     }
 
-    return { type: 'update', docId: keepDoc._id, record: finalRecord, duplicatesRemoved: existingDocs.length - 1 };
+    const photoCleanupPending = await cleanupObsoletePhotos();
+    return {
+      type: 'update',
+      docId: keepDoc._id,
+      record: finalRecord,
+      duplicatesRemoved: existingDocs.length - 1,
+      photoCleanupPending
+    };
   }
 
   const addResult = await collection.add({ data: payload });
   return { type: 'add', docId: addResult._id, record: finalRecord };
 }
 
-async function deleteSingleRecordInCloud(dateKey, wxApi = wx) {
+async function deleteSingleRecordInCloud(dateKey, wxApi = wx, options = {}) {
   const normalizedDateKey = normalizeRecordDateKey(dateKey);
   if (!normalizedDateKey) {
     return null;
   }
+
+  queuePhotoDeletions(options.photoFileIds || [], wxApi);
 
   const collection = getRecordCollection(wxApi);
   const pageSize = 20;
@@ -814,15 +931,19 @@ async function deleteSingleRecordInCloud(dateKey, wxApi = wx) {
     offset += pageSize;
   }
 
-  if (allDocs.length === 0) {
-    return { type: 'none', count: 0 };
-  }
+  queuePhotoDeletions(allDocs.map((doc) => doc && doc.photo), wxApi);
 
   let removed = 0;
   for (const doc of allDocs) {
     if (!doc || !doc._id) continue;
     await collection.doc(doc._id).remove();
     removed++;
+  }
+
+  await flushPendingPhotoDeletions(wxApi);
+
+  if (allDocs.length === 0) {
+    return { type: 'none', count: 0 };
   }
 
   return { type: 'remove', count: removed };
@@ -838,12 +959,14 @@ async function flushPendingRecordDeletions(wxApi = wx) {
     completed.push(dateKey);
   }
 
+  await flushPendingPhotoDeletions(wxApi);
+
   return { completed, remaining: getPendingRecordDeletions(wxApi) };
 }
 
 async function migrateLegacySnapshotToStructuredCloud(wxApi = wx) {
   const legacyDoc = await getCurrentUserDoc(wxApi);
-  if (!legacyDoc || !legacyDoc.records || Object.keys(legacyDoc.records).length === 0) {
+  if (!legacyDoc) {
     return null;
   }
 
@@ -851,6 +974,8 @@ async function migrateLegacySnapshotToStructuredCloud(wxApi = wx) {
     records: legacyDoc.records,
     terms: legacyDoc.terms,
     goal: legacyDoc.goal,
+    goalUpdatedAt: legacyDoc.goalUpdatedAt,
+    monthlyGoals: legacyDoc.monthlyGoals,
     courseTags: legacyDoc.courseTags
   });
   const hydratedSnapshot = await hydrateSnapshotPhotos(snapshot, wxApi);
@@ -867,6 +992,8 @@ async function pushSnapshotToCloud(snapshot, wxApi = wx, options = {}) {
     records: legacyDoc.records,
     terms: legacyDoc.terms,
     goal: legacyDoc.goal,
+    goalUpdatedAt: legacyDoc.goalUpdatedAt,
+    monthlyGoals: legacyDoc.monthlyGoals,
     courseTags: legacyDoc.courseTags
   }) : {};
   const baseSnapshot = mergeSnapshots(localSnapshot, snapshot);
@@ -891,17 +1018,37 @@ async function pushSnapshotToCloud(snapshot, wxApi = wx, options = {}) {
   };
 }
 
-async function backupSnapshotToCloud(snapshot, wxApi = wx) {
+async function backupSnapshotToCloud(snapshot, wxApi = wx, options = {}) {
   const localSnapshot = normalizeSnapshot(snapshot);
   const hydratedSnapshot = await hydrateSnapshotPhotos(localSnapshot, wxApi);
+  const replaceRecords = options.replaceRecords !== false;
 
   await saveProfileSnapshot(hydratedSnapshot, wxApi);
-  await saveRecordSnapshot(hydratedSnapshot, wxApi, { replaceRecords: true });
-  writeLocalSnapshot(hydratedSnapshot, wxApi);
+  await saveRecordSnapshot(hydratedSnapshot, wxApi, { replaceRecords });
+
+  // 云端上传可能把本地照片路径换成 cloud:// fileID，但备份期间用户仍可能
+  // 新建、编辑或删除记录。只回写“从备份开始后完全未变化”的照片字段，绝不
+  // 用启动时旧快照覆盖当前本地记录或资料。
+  const currentSnapshot = readLocalSnapshot(wxApi);
+  const nextRecords = { ...currentSnapshot.records };
+  Object.keys(localSnapshot.records).forEach((dateKey) => {
+    const sourceRecord = localSnapshot.records[dateKey];
+    const hydratedRecord = hydratedSnapshot.records[dateKey];
+    const currentRecord = currentSnapshot.records[dateKey];
+    if (!sourceRecord || !hydratedRecord || !currentRecord) return;
+
+    const recordIsUnchanged = currentRecord.updatedAt === sourceRecord.updatedAt &&
+      currentRecord.photo === sourceRecord.photo;
+    if (recordIsUnchanged && hydratedRecord.photo !== sourceRecord.photo) {
+      nextRecords[dateKey] = { ...currentRecord, photo: hydratedRecord.photo };
+    }
+  });
+  wxApi.setStorageSync(STORAGE_KEYS.records, nextRecords);
+  const safeLocalSnapshot = { ...currentSnapshot, records: nextRecords };
 
   return {
     type: 'local-authoritative-backup',
-    snapshot: hydratedSnapshot
+    snapshot: safeLocalSnapshot
   };
 }
 
@@ -941,9 +1088,9 @@ async function backupLocalToCloudIfNeeded(wxApi = wx) {
   };
 }
 
-async function migrateLocalSnapshotToCloud(wxApi = wx) {
+async function migrateLocalSnapshotToCloud(wxApi = wx, options = {}) {
   const localSnapshot = readLocalSnapshot(wxApi);
-  const result = await backupSnapshotToCloud(localSnapshot, wxApi);
+  const result = await backupSnapshotToCloud(localSnapshot, wxApi, options);
 
   return {
     migrated: true,
@@ -969,7 +1116,7 @@ async function restoreFromCloudIfLocalEmpty(wxApi = wx) {
 
   const visibleSnapshot = snapshot ? stripDeletedSnapshot(snapshot) : null;
 
-  if (!visibleSnapshot || !visibleSnapshot.records || Object.keys(visibleSnapshot.records).length === 0) {
+  if (!visibleSnapshot) {
     return {
       restored: false,
       reason: 'cloud-empty',
@@ -981,7 +1128,9 @@ async function restoreFromCloudIfLocalEmpty(wxApi = wx) {
 
   return {
     restored: true,
-    reason: 'cloud-restored',
+    reason: Object.keys(visibleSnapshot.records || {}).length > 0
+      ? 'cloud-restored'
+      : 'cloud-profile-restored',
     snapshot: visibleSnapshot
   };
 }
@@ -994,9 +1143,7 @@ async function fetchLatestCloudSnapshot(wxApi = wx) {
 
   // 返回带 isDeleted 的完整 snapshot，让调用方在 freshness 比较时
   // 能看到删除事件的时间戳；调用方负责在展示前调用 stripDeletedSnapshot
-  return snapshot && snapshot.records && Object.keys(snapshot.records).length > 0
-    ? normalizeSnapshot(snapshot)
-    : null;
+  return snapshot ? normalizeSnapshot(snapshot) : null;
 }
 
 module.exports = {
@@ -1021,6 +1168,9 @@ module.exports = {
   getPendingRecordDeletions,
   queueRecordDeletion,
   clearPendingRecordDeletion,
+  getPendingPhotoDeletions,
+  queuePhotoDeletions,
+  flushPendingPhotoDeletions,
   flushPendingRecordDeletions,
   getCurrentUserDoc,
   pushSnapshotToCloud,
