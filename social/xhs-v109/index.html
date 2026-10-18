@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ballet Mood 1.0.9｜小红书配图</title>
+  <style>
+    :root {
+      --oat: #f3eee5;
+      --paper: #fbf8f2;
+      --ink: #332f2b;
+      --muted: #7c746c;
+      --taupe: #b8a697;
+      --blush: #d8b7ad;
+      --wine: #753f48;
+      --sage: #aeb3a3;
+      --line: rgba(67, 54, 45, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { background: #2c2926; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 4%, rgba(216,183,173,.18), transparent 25%),
+        #2c2926;
+      font-family: "PingFang SC", "Hiragino Sans GB", sans-serif;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 16px 24px;
+      color: #f8f3eb;
+      background: rgba(38, 35, 32, .92);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+
+    .toolbar strong {
+      font-family: Baskerville, Georgia, serif;
+      font-size: 20px;
+      letter-spacing: .04em;
+    }
+
+    .toolbar span { color: #bfb6ae; font-size: 13px; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 42px;
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 52px;
+      align-items: start;
+    }
+
+    .frame {
+      display: grid;
+      width: calc(1080px * .42);
+      gap: 12px;
+      justify-self: center;
+      justify-items: start;
+    }
+
+    .frame-label {
+      color: #c9c0b8;
+      font-size: 13px;
+      letter-spacing: .12em;
+    }
+
+    .card {
+      --scale: 0.42;
+      position: relative;
+      width: 1080px;
+      height: 1440px;
+      transform: scale(var(--scale));
+      transform-origin: top left;
+      margin-bottom: calc(1440px * (var(--scale) - 1));
+      overflow: hidden;
+      isolation: isolate;
+      background: var(--oat);
+      box-shadow: 0 35px 90px rgba(0,0,0,.28);
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -3;
+      opacity: .28;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.08'/%3E%3C/svg%3E");
+    }
+
+    .card-number {
+      position: absolute;
+      top: 72px;
+      right: 72px;
+      font: 22px/1 Baskerville, Georgia, serif;
+      letter-spacing: .16em;
+      color: rgba(51,47,43,.48);
+    }
+
+    .eyebrow {
+      font: 24px/1.2 Baskerville, Georgia, serif;
+      letter-spacing: .24em;
+      text-transform: uppercase;
+      color: var(--wine);
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    h1, h2 {
+      font-family: "Songti SC", "STSong", Baskerville, serif;
+      font-weight: 500;
+    }
+
+    .ribbon {
+      position: absolute;
+      border: 3px solid rgba(117,63,72,.19);
+      border-radius: 50%;
+      transform: rotate(-18deg);
+    }
+
+    .brand-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      font: 24px/1 Baskerville, Georgia, serif;
+      letter-spacing: .11em;
+      color: var(--muted);
+    }
+
+    .brand-mark::before {
+      content: "";
+      width: 36px;
+      height: 1px;
+      background: var(--wine);
+    }
+
+    /* 01 cover */
+    .cover {
+      padding: 108px 86px 82px;
+      background:
+        linear-gradient(155deg, rgba(255,255,255,.28), transparent 48%),
+        var(--oat);
+    }
+
+    .cover .version {
+      display: inline-flex;
+      padding: 13px 22px 11px;
+      margin-top: 48px;
+      border: 1px solid rgba(117,63,72,.32);
+      border-radius: 999px;
+      color: var(--wine);
+      font: 22px/1 Baskerville, Georgia, serif;
+      letter-spacing: .12em;
+    }
+
+    .cover h1 {
+      position: relative;
+      z-index: 2;
+      margin-top: 86px;
+      font-size: 94px;
+      line-height: 1.22;
+      letter-spacing: -.04em;
+    }
+
+    .cover h1 em {
+      color: var(--wine);
+      font-style: normal;
+    }
+
+    .cover .sub {
+      width: 650px;
+      margin-top: 54px;
+      font: 32px/1.75 "Songti SC", "STSong", serif;
+      color: var(--muted);
+    }
+
+    .cover .shoe-art {
+      position: absolute;
+      right: -36px;
+      bottom: 38px;
+      width: 510px;
+      height: 590px;
+      opacity: .96;
+    }
+
+    .cover .ribbon.one { width: 620px; height: 260px; right: -220px; bottom: 220px; }
+    .cover .ribbon.two { width: 760px; height: 330px; right: -330px; bottom: 110px; transform: rotate(12deg); }
+    .cover .brand-mark { position: absolute; left: 86px; bottom: 82px; }
+
+    /* shared editorial pages */
+    .editorial { padding: 82px 72px 72px; }
+
+    .editorial .head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      margin-top: 44px;
+      padding-bottom: 30px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .editorial h2 { font-size: 66px; line-height: 1.16; }
+    .editorial .head-note { width: 270px; color: var(--muted); font-size: 24px; line-height: 1.55; text-align: right; }
+
+    .ui-panel {
+      position: relative;
+      margin-top: 48px;
+      padding: 40px;
+      border: 1px solid rgba(255,255,255,.8);
+      border-radius: 34px;
+      background: rgba(251,248,242,.82);
+      box-shadow: 0 24px 70px rgba(82,67,57,.09);
+    }
+
+    .panel-top { display: flex; justify-content: space-between; align-items: center; }
+    .panel-top b { font: 30px/1.2 "Songti SC", serif; }
+    .panel-top span { color: var(--muted); font-size: 21px; }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr 1fr;
+      gap: 18px;
+      margin-top: 28px;
+    }
+
+    .metric {
+      min-height: 164px;
+      padding: 28px 24px;
+      border-radius: 24px;
+      background: #f4eee6;
+    }
+
+    .metric.primary { background: #d9cec2; color: #fffaf4; }
+    .metric strong { display: block; font: 58px/1 Baskerville, Georgia, serif; font-weight: 400; }
+    .metric small { display: block; margin-top: 18px; font-size: 21px; color: inherit; opacity: .78; }
+
+    .section-kicker { margin-top: 40px; color: var(--muted); font-size: 21px; letter-spacing: .13em; }
+
+    .bars { display: grid; gap: 24px; margin-top: 24px; }
+    .bar-row { display: grid; grid-template-columns: 120px 1fr 98px; align-items: center; gap: 20px; font-size: 23px; }
+    .track { height: 12px; overflow: hidden; border-radius: 999px; background: #ebe2d7; }
+    .fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--taupe), var(--blush)); }
+    .bar-row em { color: var(--muted); font-style: normal; text-align: right; }
+
+    .quote {
+      margin-top: 42px;
+      padding-left: 28px;
+      border-left: 3px solid var(--wine);
+      font: 28px/1.7 "Songti SC", serif;
+      color: #615951;
+    }
+
+    .thanks {
+      position: absolute;
+      left: 72px;
+      right: 72px;
+      bottom: 66px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 28px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 22px;
+    }
+
+    .thanks b { color: var(--wine); font-weight: 500; }
+
+    .demo-note {
+      position: absolute;
+      left: 72px;
+      bottom: 122px;
+      color: #9c938b;
+      font-size: 16px;
+      letter-spacing: .04em;
+    }
+
+    /* annual chart */
+    .annual { background: #eee7dd; }
+    .annual .ui-panel { min-height: 760px; }
+    .annual-total { margin-top: 34px; font: 88px/1 Baskerville, Georgia, serif; color: var(--wine); }
+    .annual-total span { font: 23px/1 "PingFang SC", sans-serif; color: var(--muted); }
+
+    .chart {
+      position: relative;
+      display: flex;
+      align-items: end;
+      gap: 20px;
+      height: 340px;
+      margin-top: 46px;
+      padding: 28px 8px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .chart::before, .chart::after {
+      content: "";
+      position: absolute;
+      left: 0; right: 0;
+      border-top: 1px dashed rgba(67,54,45,.11);
+    }
+    .chart::before { top: 33%; }
+    .chart::after { top: 66%; }
+    .column { position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: end; height: 100%; gap: 12px; }
+    .column i { display: block; width: 34px; border-radius: 20px 20px 4px 4px; background: #cbb9aa; }
+    .column.active i { background: var(--wine); }
+    .column span { color: var(--muted); font-size: 17px; }
+
+    .annual .quote { margin-top: 50px; font-size: 32px; }
+
+    /* history */
+    .history { background: #f6f0e8; }
+    .history-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 54px; }
+    .calendar-card, .history-stats-card, .goal-card { min-height: 720px; padding: 36px; border-radius: 34px; background: rgba(255,255,255,.62); box-shadow: 0 20px 60px rgba(82,67,57,.08); }
+    .calendar-title { display: flex; justify-content: space-between; font: 28px/1.3 "Songti SC", serif; }
+    .calendar-title span { color: var(--wine); }
+    .week { display: grid; grid-template-columns: repeat(7,1fr); gap: 9px; margin-top: 34px; color: var(--muted); font-size: 15px; text-align: center; }
+    .days { display: grid; grid-template-columns: repeat(7,1fr); gap: 9px; margin-top: 18px; }
+    .day { display: grid; place-items: center; aspect-ratio: 1; border-radius: 50%; color: #706860; font-size: 18px; }
+    .day.done { background: #d8c7bb; color: #fff; }
+    .day.photo { background: var(--wine); color: #fff; box-shadow: 0 9px 22px rgba(117,63,72,.2); }
+    .history-stats-card { display: flex; flex-direction: column; }
+    .history-stats-card small { color: var(--wine); font-size: 18px; letter-spacing: .15em; }
+    .history-period { display: flex; justify-content: space-between; align-items: center; margin-top: 28px; font: 29px/1.2 "Songti SC", serif; }
+    .history-period span { color: var(--wine); font-family: "PingFang SC", sans-serif; }
+    .history-total { margin-top: 58px; color: var(--wine); font: 72px/1 Baskerville, Georgia, serif; }
+    .history-total em { margin-left: 8px; color: var(--muted); font: normal 20px/1 "PingFang SC", sans-serif; }
+    .history-label { margin-top: 12px; color: var(--muted); font-size: 21px; }
+    .history-mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 38px; }
+    .history-mini { padding: 22px 18px; border-radius: 20px; background: #f1e9df; }
+    .history-mini b { display: block; font: 38px/1 Baskerville, Georgia, serif; font-weight: 400; }
+    .history-mini span { display: block; margin-top: 10px; color: var(--muted); font-size: 17px; }
+    .history-course { margin-top: 38px; }
+    .history-course-label { display: flex; justify-content: space-between; margin-bottom: 13px; color: var(--muted); font-size: 17px; }
+    .history-course .track { height: 9px; }
+    .history-hint { margin-top: auto; padding-top: 26px; border-top: 1px solid var(--line); color: var(--muted); font-size: 18px; }
+    .goal-card { display: flex; flex-direction: column; }
+    .goal-card small { color: var(--wine); font-size: 19px; letter-spacing: .15em; }
+    .goal-card h3 { margin-top: 30px; font: 45px/1.36 "Songti SC", serif; font-weight: 500; }
+    .goal-card p { margin-top: 34px; color: var(--muted); font: 27px/1.75 "Songti SC", serif; }
+    .goal-card .rule { flex: 1; margin-top: 34px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 49px, rgba(67,54,45,.1) 50px); }
+    .goal-card .month-switch { display: flex; justify-content: space-between; color: var(--muted); font-size: 18px; letter-spacing: .08em; }
+
+    /* cloud */
+    .cloud {
+      color: #f8f3eb;
+      background:
+        radial-gradient(circle at 80% 18%, rgba(216,183,173,.22), transparent 28%),
+        #3a3431;
+    }
+    .cloud .card-number, .cloud .eyebrow { color: #d7c0b8; }
+    .cloud .head { border-color: rgba(255,255,255,.14); }
+    .cloud .head-note { color: #c9bfb7; }
+    .cloud-flow {
+      display: grid;
+      grid-template-columns: 1fr 150px 1fr;
+      align-items: center;
+      gap: 24px;
+      margin-top: 110px;
+    }
+    .device {
+      min-height: 430px;
+      padding: 38px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 42px;
+      background: rgba(255,255,255,.06);
+      backdrop-filter: blur(12px);
+    }
+    .device .icon { font-size: 56px; }
+    .device h3 { margin-top: 36px; font: 38px/1.3 "Songti SC", serif; }
+    .device p { margin-top: 22px; color: #c8beb6; font-size: 23px; line-height: 1.8; }
+    .device b { display: inline-block; margin-top: 30px; padding: 10px 16px; border-radius: 999px; color: #2f2a27; background: #d7c6ba; font-size: 18px; font-weight: 500; }
+    .flow-arrow { display: grid; justify-items: center; gap: 14px; color: #d7c0b8; text-align: center; font-size: 17px; }
+    .flow-arrow i { width: 100%; height: 1px; position: relative; background: #d7c0b8; }
+    .flow-arrow i::after { content: ""; position: absolute; right: 0; top: -5px; width: 10px; height: 10px; border-top: 1px solid #d7c0b8; border-right: 1px solid #d7c0b8; transform: rotate(45deg); }
+    .cloud .promise { margin-top: 92px; font: 39px/1.65 "Songti SC", serif; }
+    .cloud .promise em { color: #e4beb2; font-style: normal; }
+    .cloud .footnote { position: absolute; left: 72px; bottom: 68px; color: #aaa099; font-size: 20px; }
+
+    /* closing */
+    .closing {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 104px 88px 80px;
+      background:
+        radial-gradient(circle at 50% 32%, rgba(216,183,173,.28), transparent 31%),
+        var(--paper);
+    }
+    .closing .monogram {
+      display: grid;
+      place-items: center;
+      width: 170px;
+      height: 170px;
+      border: 1px solid rgba(117,63,72,.28);
+      border-radius: 50%;
+      font: italic 72px/1 Baskerville, Georgia, serif;
+      color: var(--wine);
+    }
+    .closing h2 { margin-top: 72px; font-size: 72px; line-height: 1.35; }
+    .closing p { width: 760px; margin-top: 44px; color: var(--muted); font: 31px/1.85 "Songti SC", serif; }
+    .search-box { display: flex; align-items: center; width: 720px; margin-top: 76px; padding: 24px 32px; border: 1px solid rgba(67,54,45,.18); border-radius: 999px; background: #fff; box-shadow: 0 18px 60px rgba(82,67,57,.09); text-align: left; }
+    .search-box span { color: #a69b92; font-size: 28px; }
+    .search-box b { margin-left: 24px; font-size: 29px; font-weight: 500; }
+    .closing .release { margin-top: 40px; color: var(--wine); font: 21px/1 Baskerville, Georgia, serif; letter-spacing: .16em; }
+    .closing .brand-mark { margin-top: auto; }
+
+    @media (max-width: 700px) {
+      .toolbar { align-items: flex-start; flex-direction: column; }
+      .cards { grid-template-columns: 1fr; padding: 24px 10px 50px; }
+      .frame { width: calc(1080px * .34); }
+      .card { --scale: 0.34; }
+    }
+
+    @media print {
+      body { background: #fff; }
+      .toolbar, .frame-label { display: none; }
+      .cards { display: block; padding: 0; }
+      .frame { page-break-after: always; }
+      .card { --scale: 1; margin: 0; box-shadow: none; }
+    }
+
+    body.export-mode {
+      width: 1080px;
+      height: 1440px;
+      overflow: hidden;
+      background: var(--oat);
+    }
+
+    body.export-mode .toolbar,
+    body.export-mode .frame-label { display: none; }
+    body.export-mode .cards { display: block; width: 1080px; height: 1440px; margin: 0; padding: 0; }
+    body.export-mode .frame { display: none; width: 1080px; }
+    body.export-mode .frame.export-selected { display: grid; }
+    body.export-mode .card { --scale: 1; margin: 0; box-shadow: none; }
+  </style>
+</head>
+<body>
+  <header class="toolbar">
+    <strong>Ballet Mood 1.0.9 · RED NOTE CAROUSEL</strong>
+    <span>6张｜1080 × 1440｜浏览器打开后可逐张截图</span>
+  </header>
+
+  <main class="cards">
+    <section class="frame">
+      <div class="frame-label">01 · 封面</div>
+      <article class="card cover" data-card="01">
+        <div class="card-number">01 / 06</div>
+        <div class="eyebrow">A small app, growing slowly</div>
+        <div class="version">BALLET MOOD · V1.0.9</div>
+        <h1>两个月后<br>我终于<em>更新了</em><br>这本芭蕾日记</h1>
+        <p class="sub">这两个月没有停下来，终于把那些想做很久的功能认真补好了。</p>
+        <div class="ribbon one"></div>
+        <div class="ribbon two"></div>
+        <svg class="shoe-art" viewBox="0 0 520 600" aria-hidden="true">
+          <path d="M315 55C275 138 242 230 238 325c-3 68 27 151 87 170 50 15 104-23 104-78 0-62-55-96-87-144-41-62-32-139-27-218Z" fill="#d7b4aa"/>
+          <path d="M239 318c41 14 83 12 123-5M251 362c48 17 96 13 142-13" fill="none" stroke="#f6eee8" stroke-width="12" stroke-linecap="round"/>
+          <path d="M326 60C273 4 218-10 168 35c-52 47-69 144-57 231 13 96 68 192 144 231" fill="none" stroke="#8f5960" stroke-width="8" stroke-linecap="round"/>
+          <path d="M166 34c22 88 59 162 112 222" fill="none" stroke="#8f5960" stroke-width="8" stroke-linecap="round"/>
+          <path d="M327 496c-27 40-62 62-106 67" fill="none" stroke="#8f5960" stroke-width="8" stroke-linecap="round"/>
+        </svg>
+        <div class="brand-mark">BALLET MOOD</div>
+      </article>
+    </section>
+
+    <section class="frame">
+      <div class="frame-label">02 · 月度练习统计</div>
+      <article class="card editorial monthly" data-card="02">
+        <div class="card-number">02 / 06</div>
+        <div class="eyebrow">Monthly practice</div>
+        <div class="head">
+          <h2>这个月，<br>时间去了哪里？</h2>
+          <p class="head-note">按月查看练习时长、天数和不同课程的分布</p>
+        </div>
+        <div class="ui-panel">
+          <div class="panel-top"><b>2026年10月</b><span>月度练习统计</span></div>
+          <div class="summary-grid">
+            <div class="metric primary"><strong>12.5h</strong><small>本月练习</small></div>
+            <div class="metric"><strong>6</strong><small>练习天数</small></div>
+            <div class="metric"><strong>9</strong><small>课程节数</small></div>
+          </div>
+          <div class="section-kicker">课程时长分布</div>
+          <div class="bars">
+            <div class="bar-row"><span>基础课</span><div class="track"><div class="fill" style="width:72%"></div></div><em>6.0h</em></div>
+            <div class="bar-row"><span>软开课</span><div class="track"><div class="fill" style="width:48%"></div></div><em>4.0h</em></div>
+            <div class="bar-row"><span>足尖课</span><div class="track"><div class="fill" style="width:30%"></div></div><em>2.5h</em></div>
+          </div>
+        </div>
+        <p class="quote">那些看起来零散的练习，终于有了可以回看的形状。</p>
+        <div class="demo-note">* 界面为功能示意，数据为示例</div>
+        <div class="thanks"><span>月度 / 年度练习统计</span><b>功能灵感来自一位舞友的建议 🩰</b></div>
+      </article>
+    </section>
+
+    <section class="frame">
+      <div class="frame-label">03 · 年度练习统计</div>
+      <article class="card editorial annual" data-card="03">
+        <div class="card-number">03 / 06</div>
+        <div class="eyebrow">A year in motion</div>
+        <div class="head">
+          <h2>把一年的练习<br>慢慢连起来</h2>
+          <p class="head-note">回看每个月的节奏，而不是只记住某一次进步</p>
+        </div>
+        <div class="ui-panel">
+          <div class="panel-top"><b>2026年度</b><span>全年练习变化</span></div>
+          <div class="annual-total">49.5 <span>小时 · 全年累计</span></div>
+          <div class="chart">
+            <div class="column"><i style="height:32%"></i><span>1月</span></div>
+            <div class="column"><i style="height:54%"></i><span>2月</span></div>
+            <div class="column"><i style="height:42%"></i><span>3月</span></div>
+            <div class="column"><i style="height:68%"></i><span>4月</span></div>
+            <div class="column"><i style="height:58%"></i><span>5月</span></div>
+            <div class="column"><i style="height:82%"></i><span>6月</span></div>
+            <div class="column"><i style="height:48%"></i><span>7月</span></div>
+            <div class="column active"><i style="height:96%"></i><span>8月</span></div>
+            <div class="column"><i style="height:74%"></i><span>9月</span></div>
+            <div class="column"><i style="height:62%"></i><span>10月</span></div>
+          </div>
+        </div>
+        <p class="quote">不是为了催促自己，只是想看见：这一年，我已经走了很远。</p>
+        <div class="demo-note">* 界面为功能示意，数据为示例</div>
+        <div class="thanks"><span>BALLET MOOD · 1.0.9</span><b>月度 / 年度练习统计</b></div>
+      </article>
+    </section>
+
+    <section class="frame">
+      <div class="frame-label">04 · 历史月份与月度目标</div>
+      <article class="card editorial history" data-card="04">
+        <div class="card-number">04 / 06</div>
+        <div class="eyebrow">Practice archive</div>
+        <div class="head">
+          <h2>不只看本月，<br>过去的数据也能查</h2>
+          <p class="head-note">成就页可选择历史月份或年份；每个月的目标独立保存</p>
+        </div>
+        <div class="history-layout">
+          <div class="history-stats-card">
+            <small>HISTORICAL MONTH</small>
+            <div class="history-period"><span>‹</span><b>2026年 9月</b><span>›</span></div>
+            <div class="history-total">8.5<em>小时</em></div>
+            <div class="history-label">这个月的练习统计</div>
+            <div class="history-mini-grid">
+              <div class="history-mini"><b>5</b><span>练习天数</span></div>
+              <div class="history-mini"><b>6</b><span>课程节数</span></div>
+            </div>
+            <div class="history-course">
+              <div class="history-course-label"><span>基础课</span><span>5.0h</span></div>
+              <div class="track"><div class="fill" style="width:68%"></div></div>
+            </div>
+            <div class="history-course">
+              <div class="history-course-label"><span>软开课</span><span>3.5h</span></div>
+              <div class="track"><div class="fill" style="width:46%"></div></div>
+            </div>
+            <div class="history-hint">在成就页选择过去的月份或年份</div>
+          </div>
+          <div class="goal-card">
+            <small>SEPTEMBER INTENTION</small>
+            <h3>这个月，想把重心放在哪里？</h3>
+            <p>脚背继续练习，转圈时不要急，记得享受音乐。</p>
+            <div class="rule"></div>
+            <div class="month-switch"><span>每月独立保存</span><span>09 / 2026</span></div>
+          </div>
+        </div>
+        <p class="quote">以前只能看当前统计，现在可以选月份、选年份，回看当时练了多久。</p>
+        <div class="demo-note">* 界面为功能示意，数据为示例</div>
+        <div class="thanks"><span>BALLET MOOD · 1.0.9</span><b>历史年月 / 每月目标</b></div>
+      </article>
+    </section>
+
+    <section class="frame">
+      <div class="frame-label">05 · 本地保存与云端备份</div>
+      <article class="card editorial cloud" data-card="05">
+        <div class="card-number">05 / 06</div>
+        <div class="eyebrow">Keep the memory safe</div>
+        <div class="head">
+          <h2>记录先留下，<br>备份再慢慢完成</h2>
+          <p class="head-note">这一次，终于把保存与恢复的边界想清楚了</p>
+        </div>
+        <div class="cloud-flow">
+          <div class="device">
+            <div class="icon">🩰</div>
+            <h3>先保存在本地</h3>
+            <p>写完就能看到，不必等待云端，也不让一次断网打断当天的记录。</p>
+            <b>LOCAL FIRST</b>
+          </div>
+          <div class="flow-arrow"><span>后台备份</span><i></i></div>
+          <div class="device">
+            <div class="icon">☁️</div>
+            <h3>需要时再恢复</h3>
+            <p>同一微信账号换手机，或本地数据被清理时，可以从云端找回来。</p>
+            <b>CLOUD BACKUP</b>
+          </div>
+        </div>
+        <p class="promise">没有追求看起来很厉害的实时同步，<br>而是选择了一个更适合这本<em>个人芭蕾日记</em>的方式。</p>
+        <div class="footnote">* 当前版本不提供多台设备之间的实时双向同步</div>
+      </article>
+    </section>
+
+    <section class="frame">
+      <div class="frame-label">06 · 结尾与搜索引导</div>
+      <article class="card closing" data-card="06">
+        <div class="card-number">06 / 06</div>
+        <div class="monogram">B</div>
+        <h2>希望写下的每一次练习<br>都能在未来被重新看见</h2>
+        <p>谢谢一路给我建议、陪我测试，也包容这个小程序慢慢长大的每一位舞友。</p>
+        <div class="search-box"><span>⌕</span><b>Ballet Mood</b></div>
+        <div class="release">WECHAT MINI PROGRAM · VERSION 1.0.9</div>
+        <div class="brand-mark">MADE FOR BALLET DAYS</div>
+      </article>
+    </section>
+  </main>
+  <script>
+    const exportCard = new URLSearchParams(window.location.search).get("card");
+    if (exportCard) {
+      document.body.classList.add("export-mode");
+      const selected = document.querySelector(`[data-card="${exportCard}"]`);
+      if (selected) selected.closest(".frame").classList.add("export-selected");
+    }
+  </script>
+</body>
+</html>

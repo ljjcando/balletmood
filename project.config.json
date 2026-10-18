@@ -27,7 +27,32 @@
   "cloudfunctionRoot": "cloudfunctions/",
   "simulatorPluginLibVersion": {},
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      {
+        "type": "folder",
+        "value": "social"
+      },
+      {
+        "type": "folder",
+        "value": "output"
+      },
+      {
+        "type": "folder",
+        "value": "tests"
+      },
+      {
+        "type": "folder",
+        "value": "docs"
+      },
+      {
+        "type": "folder",
+        "value": ".playwright-mcp"
+      },
+      {
+        "type": "folder",
+        "value": "pages/stats/prototype"
+      }
+    ],
     "include": []
   },
   "appid": "wx955ac613374d644a",
